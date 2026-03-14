@@ -448,9 +448,110 @@ public void init() {
 
 ---
 
+## 🐰 RabbitMQ Integration (Event-Driven)
+
+### Automatic Trace Creation via Events
+
+The Observability Service can **automatically create traces** by consuming events from the Orchestrator via RabbitMQ.
+
+#### Enable RabbitMQ Integration
+
+Set environment variable:
+
+```bash
+AGENTHUB_OBSERVABILITY_RABBITMQ_ENABLED=true
+```
+
+#### How it Works
+
+```
+┌─────────────────┐
+│  Orchestrator   │
+└────────┬────────┘
+         │ Publishes events
+         ↓
+┌─────────────────┐
+│   RabbitMQ      │
+│   Exchange:     │
+│   agenthub.     │
+│   orchestrator. │
+│   events        │
+└────────┬────────┘
+         │ Routes events
+         ↓
+┌─────────────────────────┐
+│  Observability Service  │
+│  - Consumes events      │
+│  - Creates traces auto  │
+│  - Updates status       │
+└─────────────────────────┘
+```
+
+#### Events Consumed
+
+**Execution Events:**
+- `execution.queued` → Creates ExecutionTrace (RUNNING)
+- `execution.started` → Updates ExecutionTrace (RUNNING)
+- `execution.completed` → Completes ExecutionTrace (COMPLETED)
+- `execution.failed` → Completes ExecutionTrace (FAILED)
+- `execution.cancelled` → Completes ExecutionTrace (CANCELLED)
+- `execution.timed_out` → Completes ExecutionTrace (FAILED)
+
+**Node Events:**
+- `node.started` → Creates NodeExecutionTrace (RUNNING)
+- `node.completed` → Completes NodeExecutionTrace (COMPLETED)
+- `node.failed` → Completes NodeExecutionTrace (FAILED)
+
+#### Configuration
+
+**Orchestrator** (enable event publishing):
+
+```properties
+AGENTHUB_EVENTS_RABBITMQ_ENABLED=true
+```
+
+**Observability Service** (enable event consumption):
+
+```properties
+AGENTHUB_OBSERVABILITY_RABBITMQ_ENABLED=true
+RABBITMQ_HOST=rabbitmq
+RABBITMQ_PORT=5672
+RABBITMQ_USER=agenthub
+RABBITMQ_PASSWORD=agenthub_dev
+```
+
+#### Benefits of Event-Driven Integration
+
+✅ **No Code Changes** - Orchestrator doesn't need to call REST APIs  
+✅ **Decoupled** - Services are loosely coupled  
+✅ **Async** - Non-blocking, fire-and-forget  
+✅ **Resilient** - RabbitMQ handles retries and DLQ  
+✅ **Scalable** - Multiple consumers can process events  
+✅ **Automatic** - Traces created without explicit calls
+
+#### Queue Configuration
+
+**Exchange:** `agenthub.orchestrator.events` (topic)  
+**Queue:** `agenthub.observability.events` (durable)  
+**Routing Keys:**
+- `execution.*` - All execution events
+- `node.*` - All node events
+
+**Consumer Settings:**
+- Concurrency: 3-10 concurrent consumers
+- Prefetch: 10 messages
+- Retry: 3 attempts with exponential backoff (1s, 2s, 4s)
+
+#### Fallback
+
+If RabbitMQ integration is **disabled** (default), you can still use the REST API to manually create traces (see sections above).
+
+---
+
 ## 📚 References
 
 - [Swagger UI](http://localhost:8083/swagger-ui.html)
 - [OpenAPI Spec](http://localhost:8083/api-docs)
 - [README](README.md)
 - [Schema SQL](src/main/resources/schema.sql)
+- [RabbitMQ Management](http://localhost:15672) (guest/guest)
