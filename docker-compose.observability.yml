@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: agenthub-postgres
+    environment:
+      POSTGRES_DB: agenthub
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./agenthub-observability/src/main/resources/schema.sql:/docker-entrypoint-initdb.d/01-observability-schema.sql
+    networks:
+      - agenthub-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # AgentHub Backend
+  backend:
+    image: agenthub-backend:latest
+    container_name: agenthub-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/agenthub
+      SPRING_R2DBC_USERNAME: postgres
+      SPRING_R2DBC_PASSWORD: postgres
+    ports:
+      - "8080:8080"
+    networks:
+      - agenthub-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # AgentHub Orchestrator
+  orchestrator:
+    image: agenthub-orchestrator:latest
+    container_name: agenthub-orchestrator
+    depends_on:
+      backend:
+        condition: service_healthy
+      skill-runtime:
+        condition: service_healthy
+      observability:
+        condition: service_healthy
+    environment:
+      BACKEND_URL: http://backend:8080
+      SKILL_RUNTIME_URL: http://skill-runtime:8082
+      OBSERVABILITY_URL: http://observability:8083
+    ports:
+      - "8081:8081"
+    networks:
+      - agenthub-network
+
+  # AgentHub Skill Runtime
+  skill-runtime:
+    image: agenthub-skill-runtime:latest
+    container_name: agenthub-skill-runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    environment:
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/agenthub
+      SPRING_R2DBC_USERNAME: postgres
+      SPRING_R2DBC_PASSWORD: postgres
+      AGENTHUB_BACKEND_URL: http://backend:8080
+      AGENTHUB_OBSERVABILITY_URL: http://observability:8083
+    ports:
+      - "8082:8082"
+    networks:
+      - agenthub-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8082/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # AgentHub Observability
+  observability:
+    image: agenthub-observability:latest
+    container_name: agenthub-observability
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/agenthub
+      SPRING_R2DBC_USERNAME: postgres
+      SPRING_R2DBC_PASSWORD: postgres
+    ports:
+      - "8083:8083"
+    networks:
+      - agenthub-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8083/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # AgentHub Embedding Service (Python/FastAPI)
+  embedding:
+    image: agenthub-embedding:latest
+    container_name: agenthub-embedding
+    ports:
+      - "8084:8000"
+    networks:
+      - agenthub-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  agenthub-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
