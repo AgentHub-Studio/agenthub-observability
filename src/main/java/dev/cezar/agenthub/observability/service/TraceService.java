@@ -49,7 +49,7 @@ public class TraceService {
                 .agentVersionId(request.agentVersionId())
                 .userId(request.userId())
                 .executionId(request.executionId())
-                .status(request.status())
+                .status(ExecutionTrace.ExecutionStatus.valueOf(request.status()))
                 .startedAt(request.startedAt())
                 .inputData(request.inputData())
                 .triggerSource(request.triggerSource())
@@ -69,7 +69,7 @@ public class TraceService {
 
         return executionTraceRepository.findByExecutionId(executionId)
                 .flatMap(trace -> {
-                    if (request.status() != null) trace.setStatus(request.status());
+                    if (request.status() != null) trace.setStatus(ExecutionTrace.ExecutionStatus.valueOf(request.status()));
                     if (request.completedAt() != null) trace.setCompletedAt(request.completedAt());
                     if (request.durationMs() != null) trace.setDurationMs(request.durationMs());
                     if (request.outputData() != null) trace.setOutputData(request.outputData());

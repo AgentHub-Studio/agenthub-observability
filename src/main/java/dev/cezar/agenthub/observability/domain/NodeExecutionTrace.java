@@ -33,6 +33,9 @@ public class NodeExecutionTrace {
     @Column("execution_trace_id")
     private UUID executionTraceId;
 
+    @Column("execution_id")
+    private UUID executionId;
+
     // Node metadata
     @Column("node_id")
     private String nodeId;
@@ -44,7 +47,11 @@ public class NodeExecutionTrace {
     private String nodeName;
 
     // Execution metadata
-    private String status; // RUNNING, COMPLETED, FAILED, SKIPPED
+    private NodeStatus status;
+
+    public enum NodeStatus {
+        RUNNING, COMPLETED, FAILED, SKIPPED
+    }
 
     @Column("started_at")
     private OffsetDateTime startedAt;

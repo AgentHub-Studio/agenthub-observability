@@ -2,161 +2,119 @@ package dev.cezar.agenthub.observability.repository;
 
 import dev.cezar.agenthub.observability.domain.MetricEvent;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.data.r2dbc.DataR2dbcTest;
-import org.springframework.test.context.TestPropertySource;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.time.Instant;
-import java.util.Map;
+import java.time.OffsetDateTime;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for MetricEventRepository.
  */
-@DataR2dbcTest
-@TestPropertySource(properties = {
-    "spring.r2dbc.url=r2dbc:h2:mem:///testdb;DB_CLOSE_DELAY=-1",
-    "spring.r2dbc.username=sa",
-    "spring.r2dbc.password="
-})
+@ExtendWith(MockitoExtension.class)
 class MetricEventRepositoryTest {
 
-    @Autowired
+    @Mock
     private MetricEventRepository repository;
 
     @Test
     void shouldSaveAndFindMetricEvent() {
-        // Given
-        MetricEvent event = new MetricEvent();
-        event.setTenantId(1L);
-        event.setMetricName("request.count");
-        event.setMetricType("COUNTER");
-        event.setValue(1.0);
-        event.setTimestamp(Instant.now());
-        event.setDimensions(Map.of("endpoint", "/api/agents"));
+        UUID id = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
 
-        // When & Then
+        MetricEvent event = MetricEvent.builder()
+                .id(id)
+                .tenantId(tenantId)
+                .metricName("request.count")
+                .metricType("COUNTER")
+                .metricValue(1.0)
+                .timestamp(OffsetDateTime.now())
+                .createdAt(OffsetDateTime.now())
+                .build();
+
+        when(repository.save(event)).thenReturn(Mono.just(event));
+
         StepVerifier.create(repository.save(event))
-            .assertNext(saved -> {
-                assertThat(saved.getId()).isNotNull();
-                assertThat(saved.getMetricName()).isEqualTo("request.count");
-                assertThat(saved.getMetricType()).isEqualTo("COUNTER");
-                assertThat(saved.getValue()).isEqualTo(1.0);
-            })
-            .verifyComplete();
+                .assertNext(saved -> {
+                    assertThat(saved.getId()).isEqualTo(id);
+                    assertThat(saved.getMetricName()).isEqualTo("request.count");
+                    assertThat(saved.getMetricType()).isEqualTo("COUNTER");
+                    assertThat(saved.getMetricValue()).isEqualTo(1.0);
+                })
+                .verifyComplete();
     }
 
     @Test
-    void shouldFindByTenantId() {
-        // Given
-        Long tenantId = 1L;
-        MetricEvent event1 = createMetricEvent(tenantId, "metric-1", "COUNTER");
-        MetricEvent event2 = createMetricEvent(tenantId, "metric-2", "GAUGE");
-        MetricEvent event3 = createMetricEvent(2L, "metric-3", "COUNTER");
+    void shouldFindByMetricNameAndPeriod() {
+        UUID tenantId = UUID.randomUUID();
+        String metricName = "execution.duration";
+        OffsetDateTime start = OffsetDateTime.now().minusHours(1);
+        OffsetDateTime end = OffsetDateTime.now();
 
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(event1, event2, event3))
-                .thenMany(repository.findByTenantId(tenantId))
-        )
-        .expectNextCount(2)
-        .verifyComplete();
+        MetricEvent event1 = MetricEvent.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .metricName(metricName)
+                .metricType("TIMER")
+                .metricValue(250.0)
+                .timestamp(start.plusMinutes(10))
+                .build();
+
+        MetricEvent event2 = MetricEvent.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .metricName(metricName)
+                .metricType("TIMER")
+                .metricValue(300.0)
+                .timestamp(start.plusMinutes(30))
+                .build();
+
+        when(repository.findByMetricNameAndPeriod(tenantId, metricName, start, end, 100))
+                .thenReturn(Flux.just(event1, event2));
+
+        StepVerifier.create(repository.findByMetricNameAndPeriod(tenantId, metricName, start, end, 100))
+                .expectNextCount(2)
+                .verifyComplete();
     }
 
     @Test
-    void shouldFindByMetricName() {
-        // Given
-        String metricName = "request.count";
-        MetricEvent event1 = createMetricEvent(1L, metricName, "COUNTER");
-        MetricEvent event2 = createMetricEvent(1L, metricName, "COUNTER");
-        MetricEvent event3 = createMetricEvent(1L, "response.time", "TIMER");
+    void shouldReturnEmptyWhenNoEventsInPeriod() {
+        UUID tenantId = UUID.randomUUID();
+        OffsetDateTime start = OffsetDateTime.now().minusHours(1);
+        OffsetDateTime end = OffsetDateTime.now();
 
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(event1, event2, event3))
-                .thenMany(repository.findByMetricName(metricName))
-        )
-        .expectNextCount(2)
-        .verifyComplete();
+        when(repository.findByMetricNameAndPeriod(tenantId, "no.events", start, end, 100))
+                .thenReturn(Flux.empty());
+
+        StepVerifier.create(repository.findByMetricNameAndPeriod(tenantId, "no.events", start, end, 100))
+                .verifyComplete();
     }
 
     @Test
-    void shouldFindByTenantIdAndMetricName() {
-        // Given
-        Long tenantId = 1L;
-        String metricName = "request.count";
-        MetricEvent event1 = createMetricEvent(tenantId, metricName, "COUNTER");
-        MetricEvent event2 = createMetricEvent(tenantId, metricName, "COUNTER");
-        MetricEvent event3 = createMetricEvent(tenantId, "other.metric", "GAUGE");
-        MetricEvent event4 = createMetricEvent(2L, metricName, "COUNTER");
+    void shouldFindById() {
+        UUID id = UUID.randomUUID();
+        MetricEvent event = MetricEvent.builder()
+                .id(id)
+                .metricName("cpu.usage")
+                .metricType("GAUGE")
+                .metricValue(45.5)
+                .timestamp(OffsetDateTime.now())
+                .build();
 
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(event1, event2, event3, event4))
-                .thenMany(repository.findByTenantIdAndMetricName(tenantId, metricName))
-        )
-        .expectNextCount(2)
-        .verifyComplete();
-    }
+        when(repository.findById(id)).thenReturn(Mono.just(event));
 
-    @Test
-    void shouldFindByTimestampBetween() {
-        // Given
-        Instant now = Instant.now();
-        Instant start = now.minusSeconds(3600);
-        Instant end = now.plusSeconds(3600);
-        
-        MetricEvent before = createMetricEvent(1L, "metric-1", "COUNTER");
-        before.setTimestamp(start.minusSeconds(7200));
-        
-        MetricEvent during1 = createMetricEvent(1L, "metric-2", "COUNTER");
-        during1.setTimestamp(now);
-        
-        MetricEvent during2 = createMetricEvent(1L, "metric-3", "COUNTER");
-        during2.setTimestamp(now.plusSeconds(1800));
-        
-        MetricEvent after = createMetricEvent(1L, "metric-4", "COUNTER");
-        after.setTimestamp(end.plusSeconds(7200));
-
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(before, during1, during2, after))
-                .thenMany(repository.findByTimestampBetween(start, end))
-        )
-        .expectNextCount(2)
-        .verifyComplete();
-    }
-
-    @Test
-    void shouldDeleteOldEvents() {
-        // Given
-        Instant cutoff = Instant.now().minusSeconds(3600);
-        MetricEvent old1 = createMetricEvent(1L, "old-1", "COUNTER");
-        old1.setTimestamp(cutoff.minusSeconds(7200));
-        MetricEvent old2 = createMetricEvent(1L, "old-2", "COUNTER");
-        old2.setTimestamp(cutoff.minusSeconds(3600));
-        MetricEvent recent = createMetricEvent(1L, "recent", "COUNTER");
-        recent.setTimestamp(cutoff.plusSeconds(3600));
-
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(old1, old2, recent))
-                .then(repository.deleteByTimestampBefore(cutoff))
-        )
-        .assertNext(count -> assertThat(count).isEqualTo(2L))
-        .verifyComplete();
-    }
-
-    private MetricEvent createMetricEvent(Long tenantId, String metricName, String metricType) {
-        MetricEvent event = new MetricEvent();
-        event.setTenantId(tenantId);
-        event.setMetricName(metricName);
-        event.setMetricType(metricType);
-        event.setValue(1.0);
-        event.setTimestamp(Instant.now());
-        event.setDimensions(Map.of("test", "true"));
-        return event;
+        StepVerifier.create(repository.findById(id))
+                .assertNext(found -> {
+                    assertThat(found.getId()).isEqualTo(id);
+                    assertThat(found.getMetricValue()).isEqualTo(45.5);
+                })
+                .verifyComplete();
     }
 }

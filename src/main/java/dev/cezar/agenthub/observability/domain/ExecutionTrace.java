@@ -43,7 +43,11 @@ public class ExecutionTrace {
     private UUID executionId;
 
     // Execution metadata
-    private String status; // RUNNING, COMPLETED, FAILED, CANCELLED
+    private ExecutionStatus status;
+
+    public enum ExecutionStatus {
+        RUNNING, COMPLETED, FAILED, CANCELLED
+    }
 
     @Column("started_at")
     private OffsetDateTime startedAt;

@@ -4,6 +4,7 @@ import dev.cezar.agenthub.observability.domain.NodeExecutionTrace;
 import org.springframework.data.r2dbc.repository.R2dbcRepository;
 import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.UUID;
 
@@ -24,4 +25,9 @@ public interface NodeExecutionTraceRepository extends R2dbcRepository<NodeExecut
      * Busca nodes por tipo.
      */
     Flux<NodeExecutionTrace> findByTenantIdAndNodeTypeOrderByStartedAtDesc(UUID tenantId, String nodeType);
+
+    /**
+     * Busca node trace por executionId e nodeId.
+     */
+    Mono<NodeExecutionTrace> findByExecutionIdAndNodeId(UUID executionId, String nodeId);
 }

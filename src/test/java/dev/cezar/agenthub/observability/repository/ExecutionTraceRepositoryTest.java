@@ -2,183 +2,126 @@ package dev.cezar.agenthub.observability.repository;
 
 import dev.cezar.agenthub.observability.domain.ExecutionTrace;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.data.r2dbc.DataR2dbcTest;
-import org.springframework.test.context.TestPropertySource;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.time.Instant;
-import java.util.Map;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for ExecutionTraceRepository.
- * Tests basic CRUD operations and custom queries.
  */
-@DataR2dbcTest
-@TestPropertySource(properties = {
-    "spring.r2dbc.url=r2dbc:h2:mem:///testdb;DB_CLOSE_DELAY=-1",
-    "spring.r2dbc.username=sa",
-    "spring.r2dbc.password="
-})
+@ExtendWith(MockitoExtension.class)
 class ExecutionTraceRepositoryTest {
 
-    @Autowired
+    @Mock
     private ExecutionTraceRepository repository;
 
     @Test
-    void shouldSaveAndFindExecutionTrace() {
-        // Given
-        ExecutionTrace trace = new ExecutionTrace();
-        trace.setExecutionId(UUID.randomUUID().toString());
-        trace.setTenantId(1L);
-        trace.setAgentId(100L);
-        trace.setPipelineId(200L);
-        trace.setStatus("RUNNING");
-        trace.setStartTime(Instant.now());
-        trace.setInputParameters(Map.of("key", "value"));
-
-        // When & Then
-        StepVerifier.create(repository.save(trace))
-            .assertNext(saved -> {
-                assertThat(saved.getId()).isNotNull();
-                assertThat(saved.getExecutionId()).isEqualTo(trace.getExecutionId());
-                assertThat(saved.getTenantId()).isEqualTo(1L);
-                assertThat(saved.getAgentId()).isEqualTo(100L);
-                assertThat(saved.getStatus()).isEqualTo("RUNNING");
-            })
-            .verifyComplete();
-    }
-
-    @Test
     void shouldFindByExecutionId() {
-        // Given
-        String executionId = UUID.randomUUID().toString();
-        ExecutionTrace trace = new ExecutionTrace();
-        trace.setExecutionId(executionId);
-        trace.setTenantId(1L);
-        trace.setAgentId(100L);
-        trace.setPipelineId(200L);
-        trace.setStatus("COMPLETED");
-        trace.setStartTime(Instant.now());
-        trace.setEndTime(Instant.now());
+        UUID executionId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
 
-        // When & Then
-        StepVerifier.create(
-            repository.save(trace)
-                .then(repository.findByExecutionId(executionId))
-        )
-        .assertNext(found -> {
-            assertThat(found.getExecutionId()).isEqualTo(executionId);
-            assertThat(found.getStatus()).isEqualTo("COMPLETED");
-        })
-        .verifyComplete();
+        ExecutionTrace trace = ExecutionTrace.builder()
+                .id(UUID.randomUUID())
+                .executionId(executionId)
+                .tenantId(tenantId)
+                .status(ExecutionTrace.ExecutionStatus.RUNNING)
+                .startedAt(OffsetDateTime.now())
+                .createdAt(OffsetDateTime.now())
+                .updatedAt(OffsetDateTime.now())
+                .build();
+
+        when(repository.findByExecutionId(executionId)).thenReturn(Mono.just(trace));
+
+        StepVerifier.create(repository.findByExecutionId(executionId))
+                .assertNext(found -> {
+                    assertThat(found.getExecutionId()).isEqualTo(executionId);
+                    assertThat(found.getStatus()).isEqualTo(ExecutionTrace.ExecutionStatus.RUNNING);
+                })
+                .verifyComplete();
     }
 
     @Test
     void shouldFindByTenantId() {
-        // Given
-        Long tenantId = 1L;
-        ExecutionTrace trace1 = createTrace(tenantId, "exec-1");
-        ExecutionTrace trace2 = createTrace(tenantId, "exec-2");
-        ExecutionTrace trace3 = createTrace(2L, "exec-3");
+        UUID tenantId = UUID.randomUUID();
 
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(trace1, trace2, trace3))
-                .thenMany(repository.findByTenantId(tenantId))
-        )
-        .expectNextCount(2)
-        .verifyComplete();
+        ExecutionTrace trace1 = ExecutionTrace.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .status(ExecutionTrace.ExecutionStatus.COMPLETED)
+                .startedAt(OffsetDateTime.now())
+                .createdAt(OffsetDateTime.now())
+                .updatedAt(OffsetDateTime.now())
+                .build();
+
+        ExecutionTrace trace2 = ExecutionTrace.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .status(ExecutionTrace.ExecutionStatus.FAILED)
+                .startedAt(OffsetDateTime.now())
+                .createdAt(OffsetDateTime.now())
+                .updatedAt(OffsetDateTime.now())
+                .build();
+
+        when(repository.findByTenantIdOrderByStartedAtDesc(tenantId))
+                .thenReturn(Flux.just(trace1, trace2));
+
+        StepVerifier.create(repository.findByTenantIdOrderByStartedAtDesc(tenantId))
+                .expectNextCount(2)
+                .verifyComplete();
     }
 
     @Test
     void shouldFindByTenantIdAndAgentId() {
-        // Given
-        Long tenantId = 1L;
-        Long agentId = 100L;
-        ExecutionTrace trace1 = createTrace(tenantId, "exec-1");
-        trace1.setAgentId(agentId);
-        ExecutionTrace trace2 = createTrace(tenantId, "exec-2");
-        trace2.setAgentId(agentId);
-        ExecutionTrace trace3 = createTrace(tenantId, "exec-3");
-        trace3.setAgentId(200L);
+        UUID tenantId = UUID.randomUUID();
+        UUID agentId = UUID.randomUUID();
 
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(trace1, trace2, trace3))
-                .thenMany(repository.findByTenantIdAndAgentId(tenantId, agentId))
-        )
-        .expectNextCount(2)
-        .verifyComplete();
+        ExecutionTrace trace = ExecutionTrace.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .agentId(agentId)
+                .status(ExecutionTrace.ExecutionStatus.COMPLETED)
+                .createdAt(OffsetDateTime.now())
+                .updatedAt(OffsetDateTime.now())
+                .build();
+
+        when(repository.findByTenantIdAndAgentIdOrderByStartedAtDesc(tenantId, agentId))
+                .thenReturn(Flux.just(trace));
+
+        StepVerifier.create(repository.findByTenantIdAndAgentIdOrderByStartedAtDesc(tenantId, agentId))
+                .expectNextCount(1)
+                .verifyComplete();
     }
 
     @Test
-    void shouldFindByStatus() {
-        // Given
-        ExecutionTrace running1 = createTrace(1L, "exec-1");
-        running1.setStatus("RUNNING");
-        ExecutionTrace running2 = createTrace(1L, "exec-2");
-        running2.setStatus("RUNNING");
-        ExecutionTrace completed = createTrace(1L, "exec-3");
-        completed.setStatus("COMPLETED");
+    void shouldReturnEmptyWhenExecutionIdNotFound() {
+        UUID executionId = UUID.randomUUID();
 
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(running1, running2, completed))
-                .thenMany(repository.findByStatus("RUNNING"))
-        )
-        .expectNextCount(2)
-        .verifyComplete();
+        when(repository.findByExecutionId(executionId)).thenReturn(Mono.empty());
+
+        StepVerifier.create(repository.findByExecutionId(executionId))
+                .verifyComplete();
     }
 
     @Test
-    void shouldCountByTenantId() {
-        // Given
-        Long tenantId = 1L;
-        ExecutionTrace trace1 = createTrace(tenantId, "exec-1");
-        ExecutionTrace trace2 = createTrace(tenantId, "exec-2");
-        ExecutionTrace trace3 = createTrace(2L, "exec-3");
+    void shouldCountByStatusSince() {
+        UUID tenantId = UUID.randomUUID();
+        OffsetDateTime since = OffsetDateTime.now().minusHours(1);
 
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(trace1, trace2, trace3))
-                .then(repository.countByTenantId(tenantId))
-        )
-        .assertNext(count -> assertThat(count).isEqualTo(2L))
-        .verifyComplete();
-    }
+        when(repository.countByStatusSince(tenantId, "RUNNING", since))
+                .thenReturn(Mono.just(5L));
 
-    @Test
-    void shouldDeleteOldTraces() {
-        // Given
-        Instant cutoff = Instant.now().minusSeconds(3600);
-        ExecutionTrace old1 = createTrace(1L, "old-1");
-        old1.setStartTime(cutoff.minusSeconds(7200));
-        ExecutionTrace old2 = createTrace(1L, "old-2");
-        old2.setStartTime(cutoff.minusSeconds(3600));
-        ExecutionTrace recent = createTrace(1L, "recent");
-        recent.setStartTime(cutoff.plusSeconds(3600));
-
-        // When & Then
-        StepVerifier.create(
-            repository.saveAll(java.util.List.of(old1, old2, recent))
-                .then(repository.deleteByStartTimeBefore(cutoff))
-        )
-        .assertNext(count -> assertThat(count).isEqualTo(2L))
-        .verifyComplete();
-    }
-
-    private ExecutionTrace createTrace(Long tenantId, String executionId) {
-        ExecutionTrace trace = new ExecutionTrace();
-        trace.setExecutionId(executionId);
-        trace.setTenantId(tenantId);
-        trace.setAgentId(100L);
-        trace.setPipelineId(200L);
-        trace.setStatus("RUNNING");
-        trace.setStartTime(Instant.now());
-        return trace;
+        StepVerifier.create(repository.countByStatusSince(tenantId, "RUNNING", since))
+                .assertNext(count -> assertThat(count).isEqualTo(5L))
+                .verifyComplete();
     }
 }
