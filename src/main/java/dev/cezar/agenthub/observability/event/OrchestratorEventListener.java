@@ -42,6 +42,7 @@ public class OrchestratorEventListener {
         
         // Create execution trace with RUNNING status (queued means it will start soon)
         createExecutionTrace(event, ExecutionTrace.ExecutionStatus.RUNNING)
+                .contextWrite(ctx -> ctx.put("tenantId", event.tenantId().toString()).put("schema", "agenthub"))
                 .subscribe(
                     trace -> log.debug("Created execution trace for queued event: {}", trace.getId()),
                     error -> log.error("Failed to create execution trace for queued event", error)
@@ -57,6 +58,7 @@ public class OrchestratorEventListener {
                 event.executionId(), event.tenantId());
         
         updateExecutionStatus(event.executionId(), ExecutionTrace.ExecutionStatus.RUNNING)
+                .contextWrite(ctx -> ctx.put("tenantId", event.tenantId().toString()).put("schema", "agenthub"))
                 .subscribe(
                     trace -> log.debug("Updated execution trace status to RUNNING: {}", trace.getId()),
                     error -> log.error("Failed to update execution trace for started event", error)
@@ -72,6 +74,7 @@ public class OrchestratorEventListener {
                 event.executionId(), event.tenantId());
         
         completeExecutionTrace(event.executionId(), ExecutionTrace.ExecutionStatus.COMPLETED)
+                .contextWrite(ctx -> ctx.put("tenantId", event.tenantId().toString()).put("schema", "agenthub"))
                 .subscribe(
                     trace -> log.debug("Completed execution trace: {}", trace.getId()),
                     error -> log.error("Failed to complete execution trace", error)
@@ -87,6 +90,7 @@ public class OrchestratorEventListener {
                 event.executionId(), event.tenantId());
         
         completeExecutionTrace(event.executionId(), ExecutionTrace.ExecutionStatus.FAILED)
+                .contextWrite(ctx -> ctx.put("tenantId", event.tenantId().toString()).put("schema", "agenthub"))
                 .subscribe(
                     trace -> log.debug("Failed execution trace: {}", trace.getId()),
                     error -> log.error("Failed to update execution trace for failed event", error)
@@ -102,6 +106,7 @@ public class OrchestratorEventListener {
                 event.executionId(), event.tenantId());
         
         completeExecutionTrace(event.executionId(), ExecutionTrace.ExecutionStatus.CANCELLED)
+                .contextWrite(ctx -> ctx.put("tenantId", event.tenantId().toString()).put("schema", "agenthub"))
                 .subscribe(
                     trace -> log.debug("Cancelled execution trace: {}", trace.getId()),
                     error -> log.error("Failed to update execution trace for cancelled event", error)
@@ -117,6 +122,7 @@ public class OrchestratorEventListener {
                 event.executionId(), event.tenantId());
         
         completeExecutionTrace(event.executionId(), ExecutionTrace.ExecutionStatus.FAILED)
+                .contextWrite(ctx -> ctx.put("tenantId", event.tenantId().toString()).put("schema", "agenthub"))
                 .subscribe(
                     trace -> log.debug("Timed out execution trace: {}", trace.getId()),
                     error -> log.error("Failed to update execution trace for timeout event", error)
