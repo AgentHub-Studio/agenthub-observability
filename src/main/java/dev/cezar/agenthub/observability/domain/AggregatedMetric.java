@@ -1,6 +1,5 @@
 package dev.cezar.agenthub.observability.domain;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,7 +12,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Aggregated metric - métrica pré-agregada para performance.
+ * Aggregated metric - pre-aggregated metric for performance.
  *
  * @since 1.0.0
  */
@@ -25,7 +24,8 @@ import java.util.UUID;
 public class AggregatedMetric {
 
     @Id
-    private UUID id;
+    @Builder.Default
+    private UUID id = UUID.randomUUID();
 
     @Column("tenant_id")
     private UUID tenantId;
@@ -47,8 +47,8 @@ public class AggregatedMetric {
     @Column("period_end")
     private OffsetDateTime periodEnd;
 
-    // Dimensions (grouping keys)
-    private JsonNode dimensions;
+    // Dimensions (stored as JSON String — ClickHouse has no JSONB)
+    private String dimensions;
 
     // Aggregated value
     private Double value;

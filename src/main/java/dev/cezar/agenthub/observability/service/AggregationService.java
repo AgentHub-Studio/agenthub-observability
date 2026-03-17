@@ -49,33 +49,9 @@ public class AggregationService {
         log.info("Aggregating metrics: tenant={}, metric={}, period={}, start={}, end={}",
                 tenantId, metricName, aggregationPeriod, periodStart, periodEnd);
 
-        // SQL query para calcular agregações
-        String sql = """
-            SELECT 
-                :tenantId::uuid as tenant_id,
-                :metricName::varchar as metric_name,
-                :aggregationType::varchar as aggregation_type,
-                :aggregationPeriod::varchar as aggregation_period,
-                :periodStart::timestamptz as period_start,
-                :periodEnd::timestamptz as period_end,
-                NULL::jsonb as dimensions,
-                CASE 
-                    WHEN :aggregationType = 'SUM' THEN SUM(metric_value)
-                    WHEN :aggregationType = 'AVG' THEN AVG(metric_value)
-                    WHEN :aggregationType = 'MIN' THEN MIN(metric_value)
-                    WHEN :aggregationType = 'MAX' THEN MAX(metric_value)
-                    WHEN :aggregationType = 'COUNT' THEN COUNT(*)::numeric
-                    WHEN :aggregationType = 'P50' THEN PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY metric_value)
-                    WHEN :aggregationType = 'P95' THEN PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY metric_value)
-                    WHEN :aggregationType = 'P99' THEN PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY metric_value)
-                END as value,
-                COUNT(*) as sample_count
-            FROM metric_events
-            WHERE tenant_id = :tenantId::uuid
-              AND metric_name = :metricName
-              AND timestamp >= :periodStart::timestamptz
-              AND timestamp < :periodEnd::timestamptz
-            """;
+        // ClickHouse aggregate query reference (executed per aggregation type via repository)
+        // Uses ClickHouse native functions: quantile(0.5)(col), count(), avg(col), etc.
+        // PostgreSQL-specific: PERCENTILE_CONT WITHIN GROUP, ::uuid/::timestamptz casts removed.
 
         // Criar agregações para cada tipo
         String[] aggregationTypes = {"SUM", "AVG", "MIN", "MAX", "COUNT", "P50", "P95", "P99"};
@@ -184,13 +160,9 @@ public class AggregationService {
 
         OffsetDateTime cutoffDate = OffsetDateTime.now().minusDays(retentionDays);
 
-        // SQL para deletar agregações antigas
-        String sql = """
-            DELETE FROM aggregated_metrics
-            WHERE period_start < :cutoffDate::timestamptz
-            """;
-
-        // Por simplicidade, retorna 0 - implementação real usaria R2dbcEntityTemplate
+        // ClickHouse handles data retention via TTL defined in the table DDL
+        // (TTL toDateTime(period_start) + INTERVAL 365 DAY on aggregated_metrics).
+        // Manual DELETE is not needed; returning 0 as a stub.
         return Mono.just(0L);
     }
 }

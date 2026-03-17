@@ -1,13 +1,12 @@
 package dev.cezar.agenthub.observability.api;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Request para criar tool execution trace.
+ * Request to create a tool execution trace.
  *
  * @since 1.0.0
  */
@@ -22,8 +21,8 @@ public record CreateToolExecutionTraceRequest(
         @NotNull OffsetDateTime startedAt,
         OffsetDateTime completedAt,
         Long durationMs,
-        JsonNode inputData,
-        JsonNode outputData,
+        String inputData,
+        String outputData,
         String errorMessage,
         Integer attemptNumber,
         Integer maxRetries

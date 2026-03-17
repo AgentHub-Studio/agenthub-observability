@@ -1,6 +1,5 @@
 package dev.cezar.agenthub.observability.domain;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,7 +12,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Metric event - evento de métrica time-series.
+ * Metric event - time-series metric event.
  *
  * @since 1.0.0
  */
@@ -25,7 +24,8 @@ import java.util.UUID;
 public class MetricEvent {
 
     @Id
-    private UUID id;
+    @Builder.Default
+    private UUID id = UUID.randomUUID();
 
     @Column("tenant_id")
     private UUID tenantId;
@@ -43,8 +43,8 @@ public class MetricEvent {
     @Column("metric_unit")
     private String metricUnit; // ms, count, bytes, etc.
 
-    // Dimensions (for grouping/filtering)
-    private JsonNode dimensions; // {agentId, skillSlug, toolType, status, etc.}
+    // Dimensions (stored as JSON String — ClickHouse has no JSONB)
+    private String dimensions; // {agentId, skillSlug, toolType, status, etc.}
 
     // Timestamp
     private OffsetDateTime timestamp;

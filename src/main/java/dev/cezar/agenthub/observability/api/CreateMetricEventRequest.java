@@ -1,13 +1,12 @@
 package dev.cezar.agenthub.observability.api;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Request para criar evento de métrica.
+ * Request to create a metric event.
  *
  * @since 1.0.0
  */
@@ -17,6 +16,6 @@ public record CreateMetricEventRequest(
         @NotNull String metricType, // COUNTER, GAUGE, HISTOGRAM, TIMER
         @NotNull Double metricValue,
         String metricUnit,
-        JsonNode dimensions,
+        String dimensions,
         OffsetDateTime timestamp
 ) {}

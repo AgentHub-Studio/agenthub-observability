@@ -1,6 +1,5 @@
 package dev.cezar.agenthub.observability.domain;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,7 +12,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Node execution trace - nível de execução de nó do pipeline.
+ * Node execution trace - pipeline node execution level.
  *
  * @since 1.0.0
  */
@@ -25,7 +24,8 @@ import java.util.UUID;
 public class NodeExecutionTrace {
 
     @Id
-    private UUID id;
+    @Builder.Default
+    private UUID id = UUID.randomUUID();
 
     @Column("tenant_id")
     private UUID tenantId;
@@ -62,22 +62,22 @@ public class NodeExecutionTrace {
     @Column("duration_ms")
     private Long durationMs;
 
-    // Input/Output
+    // Input/Output (stored as JSON String — ClickHouse has no JSONB)
     @Column("input_data")
-    private JsonNode inputData;
+    private String inputData;
 
     @Column("output_data")
-    private JsonNode outputData;
+    private String outputData;
 
     @Column("error_message")
     private String errorMessage;
 
-    // Context mutation
+    // Context mutation (stored as JSON String — ClickHouse has no JSONB)
     @Column("context_before")
-    private JsonNode contextBefore;
+    private String contextBefore;
 
     @Column("context_after")
-    private JsonNode contextAfter;
+    private String contextAfter;
 
     // Retry metadata
     @Column("attempt_number")

@@ -1,13 +1,12 @@
 package dev.cezar.agenthub.observability.api;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Request para criar execution trace.
+ * Request to create an execution trace.
  *
  * @since 1.0.0
  */
@@ -19,7 +18,7 @@ public record CreateExecutionTraceRequest(
         @NotNull UUID executionId,
         @NotNull String status,
         @NotNull OffsetDateTime startedAt,
-        JsonNode inputData,
+        String inputData,
         String triggerSource,
-        JsonNode triggerMetadata
+        String triggerMetadata
 ) {}

@@ -1,6 +1,5 @@
 package dev.cezar.agenthub.observability.domain;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,7 +12,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * Execution trace - nível de execução do agente (orchestrator).
+ * Execution trace - agent execution level (orchestrator).
  *
  * @since 1.0.0
  */
@@ -25,7 +24,8 @@ import java.util.UUID;
 public class ExecutionTrace {
 
     @Id
-    private UUID id;
+    @Builder.Default
+    private UUID id = UUID.randomUUID();
 
     @Column("tenant_id")
     private UUID tenantId;
@@ -58,12 +58,12 @@ public class ExecutionTrace {
     @Column("duration_ms")
     private Long durationMs;
 
-    // Input/Output (stored as JSONB)
+    // Input/Output (stored as JSON String — ClickHouse has no JSONB)
     @Column("input_data")
-    private JsonNode inputData;
+    private String inputData;
 
     @Column("output_data")
-    private JsonNode outputData;
+    private String outputData;
 
     @Column("error_message")
     private String errorMessage;
@@ -76,7 +76,7 @@ public class ExecutionTrace {
     private String triggerSource; // API, WEBHOOK, SCHEDULE, MANUAL
 
     @Column("trigger_metadata")
-    private JsonNode triggerMetadata;
+    private String triggerMetadata;
 
     // Audit
     @Column("created_at")
