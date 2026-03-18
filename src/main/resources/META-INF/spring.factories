@@ -1,0 +1,2 @@
+org.springframework.data.r2dbc.dialect.DialectResolver$R2dbcDialectProvider=\
+  dev.cezar.agenthub.observability.config.ClickHouseDialectProvider
