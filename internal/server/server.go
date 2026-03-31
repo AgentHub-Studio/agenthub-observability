@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/AgentHub-Studio/agenthub-observability/internal/config"
+	"github.com/AgentHub-Studio/agenthub-observability/internal/handler"
 )
 
 // Server wraps the HTTP router and ClickHouse connection.
@@ -20,6 +21,8 @@ type Server struct {
 func New(cfg *config.Config, ch clickhouse.Conn) *Server {
 	s := &Server{ch: ch}
 	r := chi.NewRouter()
+
+	handler.RegisterAll(r, ch)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

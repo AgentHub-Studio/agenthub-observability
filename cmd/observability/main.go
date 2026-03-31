@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/AgentHub-Studio/agenthub-observability/internal/config"
+	"github.com/AgentHub-Studio/agenthub-observability/internal/consumer"
 	"github.com/AgentHub-Studio/agenthub-observability/internal/database"
 	"github.com/AgentHub-Studio/agenthub-observability/internal/server"
+	"github.com/AgentHub-Studio/agenthub-observability/internal/writer"
 )
 
 func main() {
@@ -21,7 +23,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	ch, err := database.NewClickHouse(ctx, cfg.ClickHouseURL)
 	if err != nil {
@@ -29,6 +32,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer ch.Close()
+
+	w := writer.NewWriter(ch)
+	if err := w.CreateTables(ctx); err != nil {
+		slog.Error("failed to create ClickHouse tables", "err", err)
+		os.Exit(1)
+	}
+
+	c := consumer.New(cfg.RabbitMQURL, func(batchCtx context.Context, events []consumer.ExecutionEvent) error {
+		return w.BulkInsertExecutions(batchCtx, events)
+	})
+
+	go c.Run(ctx)
 
 	srv := server.New(cfg, ch)
 
@@ -51,8 +66,10 @@ func main() {
 	}()
 
 	<-quit
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	cancel() // signal consumer to stop
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
 	httpServer.Shutdown(shutdownCtx) //nolint:errcheck
 	slog.Info("observability stopped")
 }
