@@ -1,0 +1,15 @@
+bin/
+coverage.out
+*.test
+**/*_test.go
+target/
+.idea/
+.vscode/
+*.swp
+.git/
+.gitignore
+*.md
+docs/
+.github/
+src/
+pom.xml
