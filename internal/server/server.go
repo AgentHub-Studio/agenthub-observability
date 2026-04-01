@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/go-chi/chi/v5"
@@ -23,6 +24,10 @@ type Server struct {
 func New(cfg *config.Config, ch clickhouse.Conn, c *consumer.Consumer) *Server {
 	s := &Server{ch: ch}
 	r := chi.NewRouter()
+
+	// CORS at root level so OPTIONS preflight returns 204 before chi returns 405.
+	r.Use(corsMiddleware(cfg.CORSOrigins))
+	r.Options("/*", func(w http.ResponseWriter, r *http.Request) {})
 
 	handler.RegisterAll(r, ch)
 
@@ -62,4 +67,33 @@ func New(cfg *config.Config, ch clickhouse.Conn, c *consumer.Consumer) *Server {
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
+}
+
+// corsMiddleware sets CORS headers and handles OPTIONS preflight.
+func corsMiddleware(origins []string) func(http.Handler) http.Handler {
+	allowAll := len(origins) == 0
+	originsMap := make(map[string]bool, len(origins))
+	for _, o := range origins {
+		if strings.TrimSpace(o) == "*" {
+			allowAll = true
+			break
+		}
+		originsMap[strings.TrimSpace(o)] = true
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin != "" && (allowAll || originsMap[origin]) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+				w.Header().Set("Access-Control-Max-Age", "86400")
+			}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

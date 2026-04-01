@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config holds the service configuration loaded from environment variables.
@@ -12,6 +13,7 @@ type Config struct {
 	RabbitMQURL     string
 	KeycloakBaseURL string
 	LogLevel        string
+	CORSOrigins     []string
 }
 
 // Load reads configuration from environment variables.
@@ -22,6 +24,7 @@ func Load() (*Config, error) {
 		RabbitMQURL:     getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 		KeycloakBaseURL: os.Getenv("KEYCLOAK_BASE_URL"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		CORSOrigins:     strings.Split(getEnv("CORS_ORIGINS", "*"), ","),
 	}
 	if cfg.ClickHouseURL == "" {
 		return nil, fmt.Errorf("config: CLICKHOUSE_URL is required")
