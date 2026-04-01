@@ -111,6 +111,12 @@ func NewWriter(conn clickhouse.Conn) *Writer {
 	return &Writer{conn: conn}
 }
 
+// Conn returns the underlying ClickHouse connection.
+// Intended for use in integration tests that need to query tables directly.
+func (w *Writer) Conn() clickhouse.Conn {
+	return w.conn
+}
+
 // CreateTables creates all required ClickHouse tables if they do not already exist.
 func (w *Writer) CreateTables(ctx context.Context) error {
 	for _, ddl := range []string{
