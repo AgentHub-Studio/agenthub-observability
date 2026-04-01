@@ -3,6 +3,7 @@ package writer_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -18,8 +19,12 @@ import (
 
 // newTestClickHouse spins up a real ClickHouse container using testcontainers and
 // returns a Writer connected to it plus a cleanup function.
+// Requires INTEGRATION_TESTS=1 and a Docker daemon to be accessible.
 func newTestClickHouse(t *testing.T) (*writer.Writer, func()) {
 	t.Helper()
+	if os.Getenv("INTEGRATION_TESTS") == "" {
+		t.Skip("skipping: set INTEGRATION_TESTS=1 to run ClickHouse integration tests")
+	}
 	ctx := context.Background()
 
 	container, err := tcclickhouse.Run(ctx, "clickhouse/clickhouse-server:24.3-alpine")
