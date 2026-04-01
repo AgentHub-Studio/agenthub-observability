@@ -5,6 +5,7 @@ package consumer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -12,13 +13,15 @@ import (
 )
 
 const (
-	exchangeName   = "executions"
-	queueName      = "observability.executions"
-	prefetchCount  = 100
+	exchangeName   = "agenthub.orchestrator.events"
+	queueName      = "agenthub.observability.events"
+	dlxName        = "agenthub.observability.dlx"
+	dlqName        = "agenthub.observability.dead"
+	prefetchCount  = 10
 	batchSize      = 100
-	flushInterval  = 5 * time.Second
+	flushInterval  = 60 * time.Second
 	backoffInitial = 1 * time.Second
-	backoffMax     = 30 * time.Second
+	backoffMax     = 60 * time.Second
 )
 
 // Consumer reads execution events from RabbitMQ and flushes them in batches.
@@ -79,32 +82,36 @@ func (c *Consumer) consume(ctx context.Context) error {
 		return err
 	}
 
+	// Declare DLX and dead-letter queue.
+	if err := ch.ExchangeDeclare(dlxName, "fanout", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("consumer: declare DLX: %w", err)
+	}
+	if _, err := ch.QueueDeclare(dlqName, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("consumer: declare DLQ: %w", err)
+	}
+	if err := ch.QueueBind(dlqName, "", dlxName, false, nil); err != nil {
+		return fmt.Errorf("consumer: bind DLQ: %w", err)
+	}
+
 	if _, err := ch.QueueDeclare(
 		queueName,
 		true,  // durable
 		false, // autoDelete
 		false, // exclusive
 		false, // noWait
-		nil,
+		amqp.Table{"x-dead-letter-exchange": dlxName},
 	); err != nil {
 		return err
 	}
 
-	// Bind to the executions exchange so messages published there are routed
-	// to our queue.  If the exchange does not exist yet we skip the bind and
-	// rely on direct queue publishing.
-	if err := ch.ExchangeDeclarePassive(exchangeName, "topic", true, false, false, false, nil); err == nil {
-		// Re-open channel after passive declare (it may have been closed on error)
-		ch.Close() //nolint:errcheck
-		ch, err = conn.Channel()
-		if err != nil {
-			return err
+	// Declare the orchestrator exchange and bind with routing keys.
+	if err := ch.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("consumer: declare exchange: %w", err)
+	}
+	for _, key := range []string{"execution.*", "node.*"} {
+		if err := ch.QueueBind(queueName, key, exchangeName, false, nil); err != nil {
+			return fmt.Errorf("consumer: bind key %s: %w", key, err)
 		}
-		if bindErr := ch.QueueBind(queueName, "#", exchangeName, false, nil); bindErr != nil {
-			slog.Warn("consumer: queue bind failed, consuming directly from queue", "err", bindErr)
-		}
-	} else {
-		slog.Warn("consumer: exchange not found, consuming directly from queue", "exchange", exchangeName)
 	}
 
 	msgs, err := ch.Consume(
