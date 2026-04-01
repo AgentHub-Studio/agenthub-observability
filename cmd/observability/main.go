@@ -16,6 +16,8 @@ import (
 	"github.com/AgentHub-Studio/agenthub-observability/internal/writer"
 )
 
+const aggregationInterval = 5 * time.Minute
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -44,6 +46,9 @@ func main() {
 	})
 
 	go c.Run(ctx)
+
+	agg := database.NewAggregator(ch, aggregationInterval)
+	go agg.Run(ctx)
 
 	srv := server.New(cfg, ch, c)
 
