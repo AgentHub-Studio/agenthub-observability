@@ -31,6 +31,60 @@ PARTITION BY toYYYYMM(started_at)
 ORDER BY (tenant_id, started_at)
 TTL started_at + INTERVAL 30 DAY`
 
+	createNodeExecutionsTable = `
+CREATE TABLE IF NOT EXISTS node_executions (
+    node_execution_id  String,
+    execution_id       String,
+    tenant_id          String,
+    node_id            String,
+    node_type          String,
+    status             String,
+    started_at         DateTime64(3, 'UTC'),
+    finished_at        Nullable(DateTime64(3, 'UTC')),
+    duration_ms        Int64,
+    input_tokens       Int32,
+    output_tokens      Int32,
+    error_msg          String,
+    INDEX idx_execution_id (execution_id) TYPE bloom_filter GRANULARITY 1
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(started_at)
+ORDER BY (tenant_id, execution_id, started_at)
+TTL started_at + INTERVAL 30 DAY`
+
+	createToolExecutionsTable = `
+CREATE TABLE IF NOT EXISTS tool_executions (
+    tool_execution_id  String,
+    execution_id       String,
+    tenant_id          String,
+    skill_slug         String,
+    tool_type          String,
+    status             String,
+    started_at         DateTime64(3, 'UTC'),
+    finished_at        Nullable(DateTime64(3, 'UTC')),
+    duration_ms        Int64,
+    error_msg          String,
+    INDEX idx_skill_slug (skill_slug) TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_tool_type (tool_type) TYPE bloom_filter GRANULARITY 1
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(started_at)
+ORDER BY (tenant_id, started_at)
+TTL started_at + INTERVAL 30 DAY`
+
+	createMetricEventsTable = `
+CREATE TABLE IF NOT EXISTS metric_events (
+    event_id       String,
+    tenant_id      String,
+    metric_name    String,
+    metric_type    String,
+    value          Float64,
+    labels         String,
+    occurred_at    DateTime64(3, 'UTC'),
+    INDEX idx_metric_name (metric_name) TYPE bloom_filter GRANULARITY 1
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (tenant_id, metric_name, occurred_at)
+TTL occurred_at + INTERVAL 90 DAY`
+
 	createAgentMetricsTable = `
 CREATE TABLE IF NOT EXISTS agent_metrics (
     tenant_id       String,
@@ -57,10 +111,15 @@ func NewWriter(conn clickhouse.Conn) *Writer {
 	return &Writer{conn: conn}
 }
 
-// CreateTables creates the agent_executions and agent_metrics tables if they
-// do not already exist.
+// CreateTables creates all required ClickHouse tables if they do not already exist.
 func (w *Writer) CreateTables(ctx context.Context) error {
-	for _, ddl := range []string{createAgentExecutionsTable, createAgentMetricsTable} {
+	for _, ddl := range []string{
+		createAgentExecutionsTable,
+		createNodeExecutionsTable,
+		createToolExecutionsTable,
+		createMetricEventsTable,
+		createAgentMetricsTable,
+	} {
 		if err := w.conn.Exec(ctx, ddl); err != nil {
 			return fmt.Errorf("writer: create table: %w", err)
 		}

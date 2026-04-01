@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -21,7 +22,6 @@ func NewTraceHandler(conn clickhouse.Conn) *TraceHandler {
 	return &TraceHandler{conn: conn}
 }
 
-// executionRow mirrors the agent_executions table columns.
 type executionRow struct {
 	ExecutionID string     `json:"executionId"`
 	TenantID    string     `json:"tenantId"`
@@ -34,7 +34,39 @@ type executionRow struct {
 	ErrorMsg    string     `json:"errorMsg,omitempty"`
 }
 
-// pageResponse is the standard paginated response envelope.
+type nodeExecutionRow struct {
+	NodeExecutionID string     `json:"nodeExecutionId"`
+	ExecutionID     string     `json:"executionId"`
+	TenantID        string     `json:"tenantId"`
+	NodeID          string     `json:"nodeId"`
+	NodeType        string     `json:"nodeType"`
+	Status          string     `json:"status"`
+	StartedAt       time.Time  `json:"startedAt"`
+	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
+	DurationMs      int64      `json:"durationMs"`
+	InputTokens     int32      `json:"inputTokens"`
+	OutputTokens    int32      `json:"outputTokens"`
+	ErrorMsg        string     `json:"errorMsg,omitempty"`
+}
+
+type toolExecutionRow struct {
+	ToolExecutionID string     `json:"toolExecutionId"`
+	ExecutionID     string     `json:"executionId"`
+	TenantID        string     `json:"tenantId"`
+	SkillSlug       string     `json:"skillSlug"`
+	ToolType        string     `json:"toolType"`
+	Status          string     `json:"status"`
+	StartedAt       time.Time  `json:"startedAt"`
+	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
+	DurationMs      int64      `json:"durationMs"`
+	ErrorMsg        string     `json:"errorMsg,omitempty"`
+}
+
+type executionCountRow struct {
+	Status string `json:"status"`
+	Count  uint64 `json:"count"`
+}
+
 type pageResponse[T any] struct {
 	Content       []T `json:"content"`
 	TotalElements int `json:"totalElements"`
@@ -42,38 +74,116 @@ type pageResponse[T any] struct {
 	Size          int `json:"size"`
 }
 
-// RegisterRoutes mounts all trace routes onto the given router.
+// RegisterRoutes mounts all trace routes onto r.
 func (h *TraceHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/api/traces", h.listTraces)
-	r.Get("/api/traces/{executionId}", h.getTrace)
+	// Legacy routes
+	r.Get("/api/traces", h.listExecutions)
+	r.Get("/api/traces/{executionId}", h.getExecution)
+
+	// V1 execution traces
+	r.Post("/api/v1/traces/executions", h.createExecution)
+	r.Put("/api/v1/traces/executions/{executionId}", h.updateExecution)
+	r.Get("/api/v1/traces/executions/{executionId}", h.getExecution)
+	r.Get("/api/v1/traces/executions", h.listExecutions)
+	r.Get("/api/v1/traces/executions/by-agent", h.listByAgent)
+	r.Get("/api/v1/traces/executions/by-period", h.listByPeriod)
+	r.Get("/api/v1/traces/executions/{executionId}/nodes", h.listNodeTraces)
+
+	// V1 tool traces
+	r.Post("/api/v1/traces/tools", h.createToolTrace)
+	r.Get("/api/v1/traces/tools/by-skill", h.listToolsBySkill)
+	r.Get("/api/v1/traces/tools/by-type", h.listToolsByType)
+
+	// V1 stats
+	r.Get("/api/v1/traces/stats/executions/count", h.countExecutions)
 }
 
-// listTraces handles GET /api/traces
-//
-// Query params: tenantId (required), agentId, status, from, to, page, size.
-func (h *TraceHandler) listTraces(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		http.Error(w, `{"error":"tenantId is required"}`, http.StatusBadRequest)
+func (h *TraceHandler) createExecution(w http.ResponseWriter, r *http.Request) {
+	var req executionRow
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	if req.ExecutionID == "" || req.TenantID == "" {
+		jsonError(w, "executionId and tenantId are required", http.StatusBadRequest)
+		return
+	}
+	if req.StartedAt.IsZero() {
+		req.StartedAt = time.Now().UTC()
+	}
+	if err := h.conn.Exec(r.Context(),
+		"INSERT INTO agent_executions (execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		req.ExecutionID, req.TenantID, req.AgentID, req.Status,
+		req.StartedAt.UTC(), req.FinishedAt, req.DurationMs, req.NodeCount, req.ErrorMsg,
+	); err != nil {
+		jsonError(w, "insert failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(req) //nolint:errcheck
+}
 
+func (h *TraceHandler) updateExecution(w http.ResponseWriter, r *http.Request) {
+	executionID := chi.URLParam(r, "executionId")
+	var req struct {
+		Status     string     `json:"status"`
+		FinishedAt *time.Time `json:"finishedAt"`
+		DurationMs int64      `json:"durationMs"`
+		NodeCount  int32      `json:"nodeCount"`
+		ErrorMsg   string     `json:"errorMsg"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := h.conn.Exec(r.Context(),
+		"ALTER TABLE agent_executions UPDATE status = ?, finished_at = ?, duration_ms = ?, node_count = ?, error_msg = ? WHERE execution_id = ?",
+		req.Status, req.FinishedAt, req.DurationMs, req.NodeCount, req.ErrorMsg, executionID,
+	); err != nil {
+		jsonError(w, "update failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *TraceHandler) getExecution(w http.ResponseWriter, r *http.Request) {
+	executionID := chi.URLParam(r, "executionId")
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
+		return
+	}
+	var e executionRow
+	if err := h.conn.QueryRow(r.Context(),
+		"SELECT execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg FROM agent_executions WHERE execution_id = ? AND tenant_id = ? LIMIT 1",
+		executionID, tenantID,
+	).Scan(&e.ExecutionID, &e.TenantID, &e.AgentID, &e.Status, &e.StartedAt, &e.FinishedAt, &e.DurationMs, &e.NodeCount, &e.ErrorMsg); err != nil {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, e)
+}
+
+func (h *TraceHandler) listExecutions(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
+		return
+	}
+	limit := queryInt(r, "limit", 100)
+	page := queryInt(r, "page", 0)
+	size := queryInt(r, "size", limit)
 	agentID := r.URL.Query().Get("agentId")
 	status := r.URL.Query().Get("status")
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-	page := queryInt(r, "page", 0)
-	size := queryInt(r, "size", 20)
-
-	from, to, err := parseTimeRange(fromStr, toStr)
+	from, to, err := parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
-		http.Error(w, `{"error":"invalid date format, use ISO 8601"}`, http.StatusBadRequest)
+		jsonError(w, "invalid date format, use ISO 8601", http.StatusBadRequest)
 		return
 	}
 
 	args := []any{tenantID}
 	where := "tenant_id = ?"
-
 	if agentID != "" {
 		where += " AND agent_id = ?"
 		args = append(args, agentID)
@@ -91,27 +201,18 @@ func (h *TraceHandler) listTraces(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *to)
 	}
 
-	// Count query
 	countArgs := make([]any, len(args))
 	copy(countArgs, args)
-
 	var total uint64
-	if err := h.conn.QueryRow(r.Context(),
-		"SELECT count() FROM agent_executions WHERE "+where,
-		countArgs...,
-	).Scan(&total); err != nil {
+	if err := h.conn.QueryRow(r.Context(), "SELECT count() FROM agent_executions WHERE "+where, countArgs...).Scan(&total); err != nil {
 		jsonError(w, "query failed", http.StatusInternalServerError)
 		return
 	}
 
-	// Data query
 	offset := page * size
 	args = append(args, size, offset)
-
 	rows, err := h.conn.Query(r.Context(),
-		"SELECT execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg"+
-			" FROM agent_executions WHERE "+where+
-			" ORDER BY started_at DESC LIMIT ? OFFSET ?",
+		"SELECT execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg FROM agent_executions WHERE "+where+" ORDER BY started_at DESC LIMIT ? OFFSET ?",
 		args...,
 	)
 	if err != nil {
@@ -120,54 +221,223 @@ func (h *TraceHandler) listTraces(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	results := make([]executionRow, 0, size)
-	for rows.Next() {
-		var e executionRow
-		if err := rows.Scan(
-			&e.ExecutionID, &e.TenantID, &e.AgentID, &e.Status,
-			&e.StartedAt, &e.FinishedAt, &e.DurationMs, &e.NodeCount, &e.ErrorMsg,
-		); err != nil {
-			jsonError(w, "scan failed", http.StatusInternalServerError)
-			return
-		}
-		results = append(results, e)
+	results := scanExecutions(w, rows)
+	if results == nil {
+		return
 	}
-
-	writeJSON(w, pageResponse[executionRow]{
-		Content:       results,
-		TotalElements: int(total),
-		Page:          page,
-		Size:          size,
-	})
+	writeJSON(w, pageResponse[executionRow]{Content: results, TotalElements: int(total), Page: page, Size: size})
 }
 
-// getTrace handles GET /api/traces/{executionId}
-//
-// Query params: tenantId (required).
-func (h *TraceHandler) getTrace(w http.ResponseWriter, r *http.Request) {
+func (h *TraceHandler) listByAgent(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.URL.Query().Get("tenantId")
+	agentID := r.URL.Query().Get("agentId")
+	if tenantID == "" || agentID == "" {
+		jsonError(w, "tenantId and agentId are required", http.StatusBadRequest)
+		return
+	}
+	limit := queryInt(r, "limit", 100)
+	rows, err := h.conn.Query(r.Context(),
+		"SELECT execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg FROM agent_executions WHERE tenant_id = ? AND agent_id = ? ORDER BY started_at DESC LIMIT ?",
+		tenantID, agentID, limit,
+	)
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	results := scanExecutions(w, rows)
+	if results != nil {
+		writeJSON(w, results)
+	}
+}
+
+func (h *TraceHandler) listByPeriod(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
+		return
+	}
+	from, to, err := parseTimeRange(r.URL.Query().Get("startDate"), r.URL.Query().Get("endDate"))
+	if err != nil || from == nil || to == nil {
+		jsonError(w, "startDate and endDate are required (ISO 8601)", http.StatusBadRequest)
+		return
+	}
+	limit := queryInt(r, "limit", 100)
+	rows, err := h.conn.Query(r.Context(),
+		"SELECT execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg FROM agent_executions WHERE tenant_id = ? AND started_at >= ? AND started_at <= ? ORDER BY started_at DESC LIMIT ?",
+		tenantID, *from, *to, limit,
+	)
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	results := scanExecutions(w, rows)
+	if results != nil {
+		writeJSON(w, results)
+	}
+}
+
+func (h *TraceHandler) listNodeTraces(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionId")
 	tenantID := r.URL.Query().Get("tenantId")
 	if tenantID == "" {
-		http.Error(w, `{"error":"tenantId is required"}`, http.StatusBadRequest)
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
 		return
 	}
-
-	var e executionRow
-	err := h.conn.QueryRow(r.Context(),
-		"SELECT execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg"+
-			" FROM agent_executions WHERE execution_id = ? AND tenant_id = ? LIMIT 1",
+	rows, err := h.conn.Query(r.Context(),
+		"SELECT node_execution_id, execution_id, tenant_id, node_id, node_type, status, started_at, finished_at, duration_ms, input_tokens, output_tokens, error_msg FROM node_executions WHERE execution_id = ? AND tenant_id = ? ORDER BY started_at ASC",
 		executionID, tenantID,
-	).Scan(&e.ExecutionID, &e.TenantID, &e.AgentID, &e.Status,
-		&e.StartedAt, &e.FinishedAt, &e.DurationMs, &e.NodeCount, &e.ErrorMsg)
+	)
 	if err != nil {
-		jsonError(w, "not found", http.StatusNotFound)
+		jsonError(w, "query failed", http.StatusInternalServerError)
 		return
 	}
+	defer rows.Close()
 
-	writeJSON(w, e)
+	results := make([]nodeExecutionRow, 0)
+	for rows.Next() {
+		var n nodeExecutionRow
+		if err := rows.Scan(&n.NodeExecutionID, &n.ExecutionID, &n.TenantID, &n.NodeID, &n.NodeType, &n.Status, &n.StartedAt, &n.FinishedAt, &n.DurationMs, &n.InputTokens, &n.OutputTokens, &n.ErrorMsg); err != nil {
+			jsonError(w, "scan failed", http.StatusInternalServerError)
+			return
+		}
+		results = append(results, n)
+	}
+	writeJSON(w, results)
 }
 
-// parseTimeRange parses optional ISO-8601 from/to strings.
+func (h *TraceHandler) createToolTrace(w http.ResponseWriter, r *http.Request) {
+	var req toolExecutionRow
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ToolExecutionID == "" || req.TenantID == "" {
+		jsonError(w, "toolExecutionId and tenantId are required", http.StatusBadRequest)
+		return
+	}
+	if req.StartedAt.IsZero() {
+		req.StartedAt = time.Now().UTC()
+	}
+	if err := h.conn.Exec(r.Context(),
+		"INSERT INTO tool_executions (tool_execution_id, execution_id, tenant_id, skill_slug, tool_type, status, started_at, finished_at, duration_ms, error_msg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		req.ToolExecutionID, req.ExecutionID, req.TenantID, req.SkillSlug, req.ToolType, req.Status,
+		req.StartedAt.UTC(), req.FinishedAt, req.DurationMs, req.ErrorMsg,
+	); err != nil {
+		jsonError(w, "insert failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(req) //nolint:errcheck
+}
+
+func (h *TraceHandler) listToolsBySkill(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.URL.Query().Get("tenantId")
+	skillSlug := r.URL.Query().Get("skillSlug")
+	if tenantID == "" || skillSlug == "" {
+		jsonError(w, "tenantId and skillSlug are required", http.StatusBadRequest)
+		return
+	}
+	limit := queryInt(r, "limit", 100)
+	rows, err := h.conn.Query(r.Context(),
+		"SELECT tool_execution_id, execution_id, tenant_id, skill_slug, tool_type, status, started_at, finished_at, duration_ms, error_msg FROM tool_executions WHERE tenant_id = ? AND skill_slug = ? ORDER BY started_at DESC LIMIT ?",
+		tenantID, skillSlug, limit,
+	)
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	results := scanToolExecutions(w, rows)
+	if results != nil {
+		writeJSON(w, results)
+	}
+}
+
+func (h *TraceHandler) listToolsByType(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.URL.Query().Get("tenantId")
+	toolType := r.URL.Query().Get("toolType")
+	if tenantID == "" || toolType == "" {
+		jsonError(w, "tenantId and toolType are required", http.StatusBadRequest)
+		return
+	}
+	limit := queryInt(r, "limit", 100)
+	rows, err := h.conn.Query(r.Context(),
+		"SELECT tool_execution_id, execution_id, tenant_id, skill_slug, tool_type, status, started_at, finished_at, duration_ms, error_msg FROM tool_executions WHERE tenant_id = ? AND tool_type = ? ORDER BY started_at DESC LIMIT ?",
+		tenantID, toolType, limit,
+	)
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	results := scanToolExecutions(w, rows)
+	if results != nil {
+		writeJSON(w, results)
+	}
+}
+
+func (h *TraceHandler) countExecutions(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
+		return
+	}
+	status := r.URL.Query().Get("status")
+	sinceStr := r.URL.Query().Get("since")
+
+	args := []any{tenantID}
+	where := "tenant_id = ?"
+	if status != "" {
+		where += " AND status = ?"
+		args = append(args, status)
+	}
+	if sinceStr != "" {
+		since, err := time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			jsonError(w, "invalid since format, use ISO 8601", http.StatusBadRequest)
+			return
+		}
+		where += " AND started_at >= ?"
+		args = append(args, since.UTC())
+	}
+
+	var count uint64
+	if err := h.conn.QueryRow(r.Context(), "SELECT count() FROM agent_executions WHERE "+where, args...).Scan(&count); err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, executionCountRow{Status: status, Count: count})
+}
+
+func scanExecutions(w http.ResponseWriter, rows driver.Rows) []executionRow {
+	results := make([]executionRow, 0)
+	for rows.Next() {
+		var e executionRow
+		if err := rows.Scan(&e.ExecutionID, &e.TenantID, &e.AgentID, &e.Status, &e.StartedAt, &e.FinishedAt, &e.DurationMs, &e.NodeCount, &e.ErrorMsg); err != nil {
+			jsonError(w, "scan failed", http.StatusInternalServerError)
+			return nil
+		}
+		results = append(results, e)
+	}
+	return results
+}
+
+func scanToolExecutions(w http.ResponseWriter, rows driver.Rows) []toolExecutionRow {
+	results := make([]toolExecutionRow, 0)
+	for rows.Next() {
+		var t toolExecutionRow
+		if err := rows.Scan(&t.ToolExecutionID, &t.ExecutionID, &t.TenantID, &t.SkillSlug, &t.ToolType, &t.Status, &t.StartedAt, &t.FinishedAt, &t.DurationMs, &t.ErrorMsg); err != nil {
+			jsonError(w, "scan failed", http.StatusInternalServerError)
+			return nil
+		}
+		results = append(results, t)
+	}
+	return results
+}
+
 func parseTimeRange(fromStr, toStr string) (*time.Time, *time.Time, error) {
 	var from, to *time.Time
 	if fromStr != "" {
@@ -187,7 +457,6 @@ func parseTimeRange(fromStr, toStr string) (*time.Time, *time.Time, error) {
 	return from, to, nil
 }
 
-// queryInt reads an int query param, falling back to def on parse failure.
 func queryInt(r *http.Request, key string, def int) int {
 	if v := r.URL.Query().Get(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -197,13 +466,11 @@ func queryInt(r *http.Request, key string, def int) int {
 	return def
 }
 
-// writeJSON writes v as an indented JSON response.
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v) //nolint:errcheck
 }
 
-// jsonError writes a simple JSON error response.
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
