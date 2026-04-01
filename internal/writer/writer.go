@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS agent_executions (
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(started_at)
 ORDER BY (tenant_id, started_at)
-TTL started_at + INTERVAL 30 DAY`
+TTL toDateTime(started_at) + INTERVAL 30 DAY`
 
 	createNodeExecutionsTable = `
 CREATE TABLE IF NOT EXISTS node_executions (
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS node_executions (
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(started_at)
 ORDER BY (tenant_id, execution_id, started_at)
-TTL started_at + INTERVAL 30 DAY`
+TTL toDateTime(started_at) + INTERVAL 30 DAY`
 
 	createToolExecutionsTable = `
 CREATE TABLE IF NOT EXISTS tool_executions (
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS tool_executions (
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(started_at)
 ORDER BY (tenant_id, started_at)
-TTL started_at + INTERVAL 30 DAY`
+TTL toDateTime(started_at) + INTERVAL 30 DAY`
 
 	createMetricEventsTable = `
 CREATE TABLE IF NOT EXISTS metric_events (
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS metric_events (
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(occurred_at)
 ORDER BY (tenant_id, metric_name, occurred_at)
-TTL occurred_at + INTERVAL 90 DAY`
+TTL toDateTime(occurred_at) + INTERVAL 90 DAY`
 
 	createAgentMetricsTable = `
 CREATE TABLE IF NOT EXISTS agent_metrics (
