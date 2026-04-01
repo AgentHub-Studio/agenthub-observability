@@ -21,36 +21,26 @@ const (
 	backoffMax     = 30 * time.Second
 )
 
-// ExecutionEvent represents an agent execution event received from RabbitMQ.
-type ExecutionEvent struct {
-	ExecutionID string     `json:"executionId"`
-	TenantID    string     `json:"tenantId"`
-	AgentID     string     `json:"agentId"`
-	Status      string     `json:"status"` // RUNNING, SUCCESS, FAILED
-	StartedAt   time.Time  `json:"startedAt"`
-	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
-	DurationMs  int64      `json:"durationMs,omitempty"`
-	NodeCount   int        `json:"nodeCount,omitempty"`
-	ErrorMsg    string     `json:"errorMsg,omitempty"`
-}
-
-// FlushFunc is called with a batch of events ready to be persisted.
-type FlushFunc func(ctx context.Context, events []ExecutionEvent) error
-
 // Consumer reads execution events from RabbitMQ and flushes them in batches.
 type Consumer struct {
-	url   string
-	flush FlushFunc
+	url     string
+	batcher *Batcher[ExecutionEvent]
 }
 
 // New creates a Consumer for the given RabbitMQ URL.
-func New(url string, flush FlushFunc) *Consumer {
-	return &Consumer{url: url, flush: flush}
+func New(url string, flush FlushFunc[ExecutionEvent]) *Consumer {
+	return &Consumer{
+		url:     url,
+		batcher: NewBatcher[ExecutionEvent](batchSize, flushInterval, flush),
+	}
 }
 
 // Run starts consuming until ctx is cancelled.  Reconnects automatically with
 // exponential backoff (1 s → 2 s → 4 s … capped at 30 s).
 func (c *Consumer) Run(ctx context.Context) {
+	// Start periodic flush in background.
+	go c.batcher.Run(ctx)
+
 	backoff := backoffInitial
 	for {
 		if err := c.consume(ctx); err != nil {
@@ -132,20 +122,16 @@ func (c *Consumer) consume(ctx context.Context) error {
 
 	connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
 
-	batch := make([]ExecutionEvent, 0, batchSize)
-	ticker := time.NewTicker(flushInterval)
-	defer ticker.Stop()
-
 	slog.Info("consumer: started", "queue", queueName)
 
 	for {
 		select {
 		case <-ctx.Done():
-			c.flushBatch(ctx, ch, &batch)
+			c.batcher.Flush(context.Background())
 			return nil
 
 		case err := <-connClosed:
-			c.flushBatch(ctx, ch, &batch)
+			c.batcher.Flush(context.Background())
 			if err != nil {
 				return err
 			}
@@ -153,7 +139,7 @@ func (c *Consumer) consume(ctx context.Context) error {
 
 		case msg, ok := <-msgs:
 			if !ok {
-				c.flushBatch(ctx, ch, &batch)
+				c.batcher.Flush(context.Background())
 				return nil
 			}
 
@@ -164,33 +150,8 @@ func (c *Consumer) consume(ctx context.Context) error {
 				continue
 			}
 
-			batch = append(batch, event)
-
-			if len(batch) >= batchSize {
-				c.flushBatch(ctx, ch, &batch)
-			}
-
+			c.batcher.Add(ctx, event)
 			msg.Ack(false) //nolint:errcheck
-
-		case <-ticker.C:
-			c.flushBatch(ctx, ch, &batch)
 		}
 	}
-}
-
-// flushBatch persists pending events and resets the slice.
-func (c *Consumer) flushBatch(ctx context.Context, ch *amqp.Channel, batch *[]ExecutionEvent) {
-	if len(*batch) == 0 {
-		return
-	}
-
-	if err := c.flush(ctx, *batch); err != nil {
-		slog.Error("consumer: flush failed", "count", len(*batch), "err", err)
-		// Keep messages in-memory; they were already acked.  A more robust
-		// implementation could republish to a dead-letter queue here.
-	} else {
-		slog.Info("consumer: flushed batch", "count", len(*batch))
-	}
-
-	*batch = (*batch)[:0]
 }
