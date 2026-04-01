@@ -16,6 +16,8 @@ import (
 	"github.com/AgentHub-Studio/agenthub-observability/internal/writer"
 )
 
+const aggregationInterval = 5 * time.Minute
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -39,13 +41,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	c := consumer.New(cfg.RabbitMQURL, func(batchCtx context.Context, events []consumer.ExecutionEvent) error {
-		return w.BulkInsertExecutions(batchCtx, events)
-	})
+	c := consumer.New(
+		cfg.RabbitMQURL,
+		func(batchCtx context.Context, events []consumer.ExecutionEvent) error {
+			return w.BulkInsertExecutions(batchCtx, events)
+		},
+		func(batchCtx context.Context, events []consumer.NodeEvent) error {
+			return w.BulkInsertNodeExecutions(batchCtx, events)
+		},
+	)
 
 	go c.Run(ctx)
 
-	srv := server.New(cfg, ch)
+	agg := database.NewAggregator(ch, aggregationInterval)
+	go agg.Run(ctx)
+
+	srv := server.New(cfg, ch, c)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,

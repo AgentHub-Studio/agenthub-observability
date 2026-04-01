@@ -4,42 +4,65 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 const (
-	exchangeName   = "executions"
-	queueName      = "observability.executions"
-	prefetchCount  = 100
+	exchangeName   = "agenthub.orchestrator.events"
+	queueName      = "agenthub.observability.events"
+	dlxName        = "agenthub.observability.dlx"
+	dlqName        = "agenthub.observability.dead"
+	prefetchCount  = 10
 	batchSize      = 100
-	flushInterval  = 5 * time.Second
+	flushInterval  = 60 * time.Second
 	backoffInitial = 1 * time.Second
-	backoffMax     = 30 * time.Second
+	backoffMax     = 60 * time.Second
 )
 
-// Consumer reads execution events from RabbitMQ and flushes them in batches.
+// Consumer reads execution and node events from RabbitMQ and routes them to
+// typed batchers via a Processor.
 type Consumer struct {
-	url     string
-	batcher *Batcher[ExecutionEvent]
+	url  string
+	proc *Processor
+
+	// Internal metrics counters — read via Metrics().
+	eventsProcessed atomic.Int64
+	eventsErrored   atomic.Int64
+}
+
+// Metrics holds a snapshot of consumer operation counters.
+type Metrics struct {
+	EventsProcessed int64
+	EventsErrored   int64
+}
+
+// Metrics returns a current snapshot of consumer counters.
+func (c *Consumer) Metrics() Metrics {
+	return Metrics{
+		EventsProcessed: c.eventsProcessed.Load(),
+		EventsErrored:   c.eventsErrored.Load(),
+	}
 }
 
 // New creates a Consumer for the given RabbitMQ URL.
-func New(url string, flush FlushFunc[ExecutionEvent]) *Consumer {
+// execFlush receives batches of ExecutionEvent; nodeFlush receives NodeEvent.
+func New(url string, execFlush FlushFunc[ExecutionEvent], nodeFlush FlushFunc[NodeEvent]) *Consumer {
 	return &Consumer{
-		url:     url,
-		batcher: NewBatcher[ExecutionEvent](batchSize, flushInterval, flush),
+		url:  url,
+		proc: NewProcessor(execFlush, nodeFlush),
 	}
 }
 
 // Run starts consuming until ctx is cancelled.  Reconnects automatically with
 // exponential backoff (1 s → 2 s → 4 s … capped at 30 s).
 func (c *Consumer) Run(ctx context.Context) {
-	// Start periodic flush in background.
-	go c.batcher.Run(ctx)
+	// Start periodic flush goroutines for all batchers.
+	go c.proc.Run(ctx)
 
 	backoff := backoffInitial
 	for {
@@ -79,32 +102,36 @@ func (c *Consumer) consume(ctx context.Context) error {
 		return err
 	}
 
+	// Declare DLX and dead-letter queue.
+	if err := ch.ExchangeDeclare(dlxName, "fanout", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("consumer: declare DLX: %w", err)
+	}
+	if _, err := ch.QueueDeclare(dlqName, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("consumer: declare DLQ: %w", err)
+	}
+	if err := ch.QueueBind(dlqName, "", dlxName, false, nil); err != nil {
+		return fmt.Errorf("consumer: bind DLQ: %w", err)
+	}
+
 	if _, err := ch.QueueDeclare(
 		queueName,
 		true,  // durable
 		false, // autoDelete
 		false, // exclusive
 		false, // noWait
-		nil,
+		amqp.Table{"x-dead-letter-exchange": dlxName},
 	); err != nil {
 		return err
 	}
 
-	// Bind to the executions exchange so messages published there are routed
-	// to our queue.  If the exchange does not exist yet we skip the bind and
-	// rely on direct queue publishing.
-	if err := ch.ExchangeDeclarePassive(exchangeName, "topic", true, false, false, false, nil); err == nil {
-		// Re-open channel after passive declare (it may have been closed on error)
-		ch.Close() //nolint:errcheck
-		ch, err = conn.Channel()
-		if err != nil {
-			return err
+	// Declare the orchestrator exchange and bind with routing keys.
+	if err := ch.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("consumer: declare exchange: %w", err)
+	}
+	for _, key := range []string{"execution.*", "node.*"} {
+		if err := ch.QueueBind(queueName, key, exchangeName, false, nil); err != nil {
+			return fmt.Errorf("consumer: bind key %s: %w", key, err)
 		}
-		if bindErr := ch.QueueBind(queueName, "#", exchangeName, false, nil); bindErr != nil {
-			slog.Warn("consumer: queue bind failed, consuming directly from queue", "err", bindErr)
-		}
-	} else {
-		slog.Warn("consumer: exchange not found, consuming directly from queue", "exchange", exchangeName)
 	}
 
 	msgs, err := ch.Consume(
@@ -127,11 +154,11 @@ func (c *Consumer) consume(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			c.batcher.Flush(context.Background())
+			c.proc.Flush(context.Background())
 			return nil
 
 		case err := <-connClosed:
-			c.batcher.Flush(context.Background())
+			c.proc.Flush(context.Background())
 			if err != nil {
 				return err
 			}
@@ -139,18 +166,19 @@ func (c *Consumer) consume(ctx context.Context) error {
 
 		case msg, ok := <-msgs:
 			if !ok {
-				c.batcher.Flush(context.Background())
+				c.proc.Flush(context.Background())
 				return nil
 			}
 
-			var event ExecutionEvent
-			if err := json.Unmarshal(msg.Body, &event); err != nil {
-				slog.Warn("consumer: failed to unmarshal event, nacking", "err", err)
+			if err := c.proc.Dispatch(ctx, msg.RoutingKey, msg.Body); err != nil {
+				slog.Warn("consumer: failed to dispatch event, nacking",
+					"routingKey", msg.RoutingKey, "err", err)
+				c.eventsErrored.Add(1)
 				msg.Nack(false, false) //nolint:errcheck
 				continue
 			}
 
-			c.batcher.Add(ctx, event)
+			c.eventsProcessed.Add(1)
 			msg.Ack(false) //nolint:errcheck
 		}
 	}
