@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/AgentHub-Studio/agenthub-observability/internal/config"
+	"github.com/AgentHub-Studio/agenthub-observability/internal/consumer"
 	"github.com/AgentHub-Studio/agenthub-observability/internal/handler"
 )
 
@@ -18,7 +19,8 @@ type Server struct {
 }
 
 // New creates a Server with health/ready endpoints wired.
-func New(cfg *config.Config, ch clickhouse.Conn) *Server {
+// Pass a non-nil consumer to expose its runtime metrics at GET /metrics.
+func New(cfg *config.Config, ch clickhouse.Conn, c *consumer.Consumer) *Server {
 	s := &Server{ch: ch}
 	r := chi.NewRouter()
 
@@ -27,6 +29,22 @@ func New(cfg *config.Config, ch clickhouse.Conn) *Server {
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
+	})
+
+	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if c == nil {
+			json.NewEncoder(w).Encode(map[string]any{"consumer": nil}) //nolint:errcheck
+			return
+		}
+		m := c.Metrics()
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"consumer": map[string]any{
+				"eventsProcessed": m.EventsProcessed,
+				"eventsErrored":   m.EventsErrored,
+				"batchesFlushed":  m.BatchesFlushed,
+			},
+		})
 	})
 
 	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {

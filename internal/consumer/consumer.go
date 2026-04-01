@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -28,14 +29,42 @@ const (
 type Consumer struct {
 	url     string
 	batcher *Batcher[ExecutionEvent]
+
+	// Internal metrics counters — read via Metrics().
+	eventsProcessed atomic.Int64
+	eventsErrored   atomic.Int64
+	batchesFlushed  atomic.Int64
+}
+
+// Metrics holds a snapshot of consumer operation counters.
+type Metrics struct {
+	EventsProcessed int64
+	EventsErrored   int64
+	BatchesFlushed  int64
+}
+
+// Metrics returns a current snapshot of consumer counters.
+func (c *Consumer) Metrics() Metrics {
+	return Metrics{
+		EventsProcessed: c.eventsProcessed.Load(),
+		EventsErrored:   c.eventsErrored.Load(),
+		BatchesFlushed:  c.batchesFlushed.Load(),
+	}
 }
 
 // New creates a Consumer for the given RabbitMQ URL.
-func New(url string, flush FlushFunc[ExecutionEvent]) *Consumer {
-	return &Consumer{
-		url:     url,
-		batcher: NewBatcher[ExecutionEvent](batchSize, flushInterval, flush),
-	}
+func New(url string, flushFn FlushFunc[ExecutionEvent]) *Consumer {
+	c := &Consumer{url: url}
+	// Wrap the flush function to increment batchesFlushed.
+	wrapped := FlushFunc[ExecutionEvent](func(ctx context.Context, batch []ExecutionEvent) error {
+		err := flushFn(ctx, batch)
+		if err == nil {
+			c.batchesFlushed.Add(1)
+		}
+		return err
+	})
+	c.batcher = NewBatcher[ExecutionEvent](batchSize, flushInterval, wrapped)
+	return c
 }
 
 // Run starts consuming until ctx is cancelled.  Reconnects automatically with
@@ -153,11 +182,13 @@ func (c *Consumer) consume(ctx context.Context) error {
 			var event ExecutionEvent
 			if err := json.Unmarshal(msg.Body, &event); err != nil {
 				slog.Warn("consumer: failed to unmarshal event, nacking", "err", err)
+				c.eventsErrored.Add(1)
 				msg.Nack(false, false) //nolint:errcheck
 				continue
 			}
 
 			c.batcher.Add(ctx, event)
+			c.eventsProcessed.Add(1)
 			msg.Ack(false) //nolint:errcheck
 		}
 	}

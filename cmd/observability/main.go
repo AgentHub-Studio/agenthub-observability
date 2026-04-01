@@ -45,7 +45,7 @@ func main() {
 
 	go c.Run(ctx)
 
-	srv := server.New(cfg, ch)
+	srv := server.New(cfg, ch, c)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
