@@ -31,3 +31,41 @@ type NodeEvent struct {
 	OutputTokens    int32      `json:"outputTokens,omitempty"`
 	ErrorMsg        string     `json:"errorMsg,omitempty"`
 }
+
+// ToolEvent represents a tool execution event within a pipeline node.
+type ToolEvent struct {
+	ToolExecutionID string     `json:"toolExecutionId"`
+	ExecutionID     string     `json:"executionId"`
+	TenantID        string     `json:"tenantId"`
+	SkillSlug       string     `json:"skillSlug"`
+	ToolType        string     `json:"toolType"`
+	Status          string     `json:"status"`
+	StartedAt       time.Time  `json:"startedAt"`
+	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
+	DurationMs      int64      `json:"durationMs,omitempty"`
+	ErrorMsg        string     `json:"errorMsg,omitempty"`
+}
+
+// MetricEvent represents a generic metric data point.
+type MetricEvent struct {
+	EventID    string    `json:"eventId"`
+	TenantID   string    `json:"tenantId"`
+	MetricName string    `json:"metricName"`
+	MetricType string    `json:"metricType"` // counter, gauge, histogram
+	Value      float64   `json:"value"`
+	Labels     string    `json:"labels"` // JSON-encoded key-value pairs
+	OccurredAt time.Time `json:"occurredAt"`
+}
+
+// AgentMetric holds pre-aggregated daily statistics for an agent.
+type AgentMetric struct {
+	TenantID      string  `json:"tenantId"`
+	AgentID       string  `json:"agentId"`
+	Date          string  `json:"date"` // YYYY-MM-DD
+	TotalRuns     uint64  `json:"totalRuns"`
+	SuccessRuns   uint64  `json:"successRuns"`
+	FailedRuns    uint64  `json:"failedRuns"`
+	AvgDurationMs float64 `json:"avgDurationMs"`
+	P95DurationMs float64 `json:"p95DurationMs"`
+	P99DurationMs float64 `json:"p99DurationMs"`
+}
