@@ -33,9 +33,9 @@ func newTestClickHouse(t *testing.T) (*writer.Writer, func()) {
 	conn, err := clickhousedriver.Open(&clickhousedriver.Options{
 		Addr: []string{fmt.Sprintf("%s:%s", host, port.Port())},
 		Auth: clickhousedriver.Auth{
-			Database: "default",
+			Database: "clickhouse",
 			Username: "default",
-			Password: "clickhouse",
+			Password: "default",
 		},
 		DialTimeout:  10 * time.Second,
 		MaxOpenConns: 2,
