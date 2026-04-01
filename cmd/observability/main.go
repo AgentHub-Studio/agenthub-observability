@@ -41,9 +41,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	c := consumer.New(cfg.RabbitMQURL, func(batchCtx context.Context, events []consumer.ExecutionEvent) error {
-		return w.BulkInsertExecutions(batchCtx, events)
-	})
+	c := consumer.New(
+		cfg.RabbitMQURL,
+		func(batchCtx context.Context, events []consumer.ExecutionEvent) error {
+			return w.BulkInsertExecutions(batchCtx, events)
+		},
+		func(batchCtx context.Context, events []consumer.NodeEvent) error {
+			return w.BulkInsertNodeExecutions(batchCtx, events)
+		},
+	)
 
 	go c.Run(ctx)
 

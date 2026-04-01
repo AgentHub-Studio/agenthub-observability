@@ -42,7 +42,6 @@ func New(cfg *config.Config, ch clickhouse.Conn, c *consumer.Consumer) *Server {
 			"consumer": map[string]any{
 				"eventsProcessed": m.EventsProcessed,
 				"eventsErrored":   m.EventsErrored,
-				"batchesFlushed":  m.BatchesFlushed,
 			},
 		})
 	})

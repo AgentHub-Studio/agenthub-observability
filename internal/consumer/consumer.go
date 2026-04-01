@@ -4,7 +4,6 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -25,22 +24,21 @@ const (
 	backoffMax     = 60 * time.Second
 )
 
-// Consumer reads execution events from RabbitMQ and flushes them in batches.
+// Consumer reads execution and node events from RabbitMQ and routes them to
+// typed batchers via a Processor.
 type Consumer struct {
-	url     string
-	batcher *Batcher[ExecutionEvent]
+	url  string
+	proc *Processor
 
 	// Internal metrics counters — read via Metrics().
 	eventsProcessed atomic.Int64
 	eventsErrored   atomic.Int64
-	batchesFlushed  atomic.Int64
 }
 
 // Metrics holds a snapshot of consumer operation counters.
 type Metrics struct {
 	EventsProcessed int64
 	EventsErrored   int64
-	BatchesFlushed  int64
 }
 
 // Metrics returns a current snapshot of consumer counters.
@@ -48,30 +46,23 @@ func (c *Consumer) Metrics() Metrics {
 	return Metrics{
 		EventsProcessed: c.eventsProcessed.Load(),
 		EventsErrored:   c.eventsErrored.Load(),
-		BatchesFlushed:  c.batchesFlushed.Load(),
 	}
 }
 
 // New creates a Consumer for the given RabbitMQ URL.
-func New(url string, flushFn FlushFunc[ExecutionEvent]) *Consumer {
-	c := &Consumer{url: url}
-	// Wrap the flush function to increment batchesFlushed.
-	wrapped := FlushFunc[ExecutionEvent](func(ctx context.Context, batch []ExecutionEvent) error {
-		err := flushFn(ctx, batch)
-		if err == nil {
-			c.batchesFlushed.Add(1)
-		}
-		return err
-	})
-	c.batcher = NewBatcher[ExecutionEvent](batchSize, flushInterval, wrapped)
-	return c
+// execFlush receives batches of ExecutionEvent; nodeFlush receives NodeEvent.
+func New(url string, execFlush FlushFunc[ExecutionEvent], nodeFlush FlushFunc[NodeEvent]) *Consumer {
+	return &Consumer{
+		url:  url,
+		proc: NewProcessor(execFlush, nodeFlush),
+	}
 }
 
 // Run starts consuming until ctx is cancelled.  Reconnects automatically with
 // exponential backoff (1 s → 2 s → 4 s … capped at 30 s).
 func (c *Consumer) Run(ctx context.Context) {
-	// Start periodic flush in background.
-	go c.batcher.Run(ctx)
+	// Start periodic flush goroutines for all batchers.
+	go c.proc.Run(ctx)
 
 	backoff := backoffInitial
 	for {
@@ -163,11 +154,11 @@ func (c *Consumer) consume(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			c.batcher.Flush(context.Background())
+			c.proc.Flush(context.Background())
 			return nil
 
 		case err := <-connClosed:
-			c.batcher.Flush(context.Background())
+			c.proc.Flush(context.Background())
 			if err != nil {
 				return err
 			}
@@ -175,19 +166,18 @@ func (c *Consumer) consume(ctx context.Context) error {
 
 		case msg, ok := <-msgs:
 			if !ok {
-				c.batcher.Flush(context.Background())
+				c.proc.Flush(context.Background())
 				return nil
 			}
 
-			var event ExecutionEvent
-			if err := json.Unmarshal(msg.Body, &event); err != nil {
-				slog.Warn("consumer: failed to unmarshal event, nacking", "err", err)
+			if err := c.proc.Dispatch(ctx, msg.RoutingKey, msg.Body); err != nil {
+				slog.Warn("consumer: failed to dispatch event, nacking",
+					"routingKey", msg.RoutingKey, "err", err)
 				c.eventsErrored.Add(1)
 				msg.Nack(false, false) //nolint:errcheck
 				continue
 			}
 
-			c.batcher.Add(ctx, event)
 			c.eventsProcessed.Add(1)
 			msg.Ack(false) //nolint:errcheck
 		}
