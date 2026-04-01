@@ -166,3 +166,153 @@ func (w *Writer) BulkInsertExecutions(ctx context.Context, events []consumer.Exe
 
 	return nil
 }
+
+// BulkInsertNodeExecutions inserts a batch of NodeEvents into node_executions.
+func (w *Writer) BulkInsertNodeExecutions(ctx context.Context, events []consumer.NodeEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	batch, err := w.conn.PrepareBatch(ctx, "INSERT INTO node_executions")
+	if err != nil {
+		return fmt.Errorf("writer: prepare batch: %w", err)
+	}
+
+	for _, e := range events {
+		var finishedAt *time.Time
+		if e.FinishedAt != nil {
+			t := e.FinishedAt.UTC()
+			finishedAt = &t
+		}
+
+		if err := batch.Append(
+			e.NodeExecutionID,
+			e.ExecutionID,
+			e.TenantID,
+			e.NodeID,
+			e.NodeType,
+			e.Status,
+			e.StartedAt.UTC(),
+			finishedAt,
+			e.DurationMs,
+			e.InputTokens,
+			e.OutputTokens,
+			e.ErrorMsg,
+		); err != nil {
+			return fmt.Errorf("writer: append row: %w", err)
+		}
+	}
+
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("writer: send batch: %w", err)
+	}
+
+	return nil
+}
+
+// BulkInsertToolExecutions inserts a batch of ToolEvents into tool_executions.
+func (w *Writer) BulkInsertToolExecutions(ctx context.Context, events []consumer.ToolEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	batch, err := w.conn.PrepareBatch(ctx, "INSERT INTO tool_executions")
+	if err != nil {
+		return fmt.Errorf("writer: prepare batch: %w", err)
+	}
+
+	for _, e := range events {
+		var finishedAt *time.Time
+		if e.FinishedAt != nil {
+			t := e.FinishedAt.UTC()
+			finishedAt = &t
+		}
+
+		if err := batch.Append(
+			e.ToolExecutionID,
+			e.ExecutionID,
+			e.TenantID,
+			e.SkillSlug,
+			e.ToolType,
+			e.Status,
+			e.StartedAt.UTC(),
+			finishedAt,
+			e.DurationMs,
+			e.ErrorMsg,
+		); err != nil {
+			return fmt.Errorf("writer: append row: %w", err)
+		}
+	}
+
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("writer: send batch: %w", err)
+	}
+
+	return nil
+}
+
+// BulkInsertMetricEvents inserts a batch of MetricEvents into metric_events.
+func (w *Writer) BulkInsertMetricEvents(ctx context.Context, events []consumer.MetricEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	batch, err := w.conn.PrepareBatch(ctx, "INSERT INTO metric_events")
+	if err != nil {
+		return fmt.Errorf("writer: prepare batch: %w", err)
+	}
+
+	for _, e := range events {
+		if err := batch.Append(
+			e.EventID,
+			e.TenantID,
+			e.MetricName,
+			e.MetricType,
+			e.Value,
+			e.Labels,
+			e.OccurredAt.UTC(),
+		); err != nil {
+			return fmt.Errorf("writer: append row: %w", err)
+		}
+	}
+
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("writer: send batch: %w", err)
+	}
+
+	return nil
+}
+
+// BulkInsertAgentMetrics inserts pre-aggregated daily agent metrics into agent_metrics.
+func (w *Writer) BulkInsertAgentMetrics(ctx context.Context, metrics []consumer.AgentMetric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	batch, err := w.conn.PrepareBatch(ctx, "INSERT INTO agent_metrics")
+	if err != nil {
+		return fmt.Errorf("writer: prepare batch: %w", err)
+	}
+
+	for _, m := range metrics {
+		if err := batch.Append(
+			m.TenantID,
+			m.AgentID,
+			m.Date,
+			m.TotalRuns,
+			m.SuccessRuns,
+			m.FailedRuns,
+			m.AvgDurationMs,
+			m.P95DurationMs,
+			m.P99DurationMs,
+		); err != nil {
+			return fmt.Errorf("writer: append row: %w", err)
+		}
+	}
+
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("writer: send batch: %w", err)
+	}
+
+	return nil
+}
