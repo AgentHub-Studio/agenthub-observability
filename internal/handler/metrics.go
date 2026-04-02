@@ -68,6 +68,9 @@ func (h *MetricHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v1/metrics/events", h.listEvents)
 	r.Get("/api/v1/metrics/aggregated", h.aggregated)
 
+	// V1 metric names
+	r.Get("/api/v1/metrics/names", h.listMetricNames)
+
 	// V1 convenience routes
 	r.Post("/api/v1/metrics/counter", h.createConvenience("COUNTER"))
 	r.Post("/api/v1/metrics/gauge", h.createConvenience("GAUGE"))
@@ -249,6 +252,35 @@ func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
 		results = append(results, a)
 	}
 	writeJSON(w, results)
+}
+
+func (h *MetricHandler) listMetricNames(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := h.conn.Query(r.Context(),
+		"SELECT DISTINCT metric_name FROM metric_events WHERE tenant_id = ? ORDER BY metric_name ASC",
+		tenantID,
+	)
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	names := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			jsonError(w, "scan failed", http.StatusInternalServerError)
+			return
+		}
+		names = append(names, name)
+	}
+	writeJSON(w, names)
 }
 
 // createConvenience returns a handler for POST /api/v1/metrics/{type} convenience endpoints.
