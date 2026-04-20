@@ -194,11 +194,11 @@ func (h *MetricHandler) listEvents(w http.ResponseWriter, r *http.Request) {
 
 func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.URL.Query().Get("tenantId")
-	metricName := r.URL.Query().Get("metricName")
-	if tenantID == "" || metricName == "" {
-		jsonError(w, "tenantId and metricName are required", http.StatusBadRequest)
+	if tenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
 		return
 	}
+	metricName := r.URL.Query().Get("metricName")
 	aggType := r.URL.Query().Get("aggregationType")
 	aggPeriod := r.URL.Query().Get("aggregationPeriod")
 	from, to, err := parseTimeRange(r.URL.Query().Get("startDate"), r.URL.Query().Get("endDate"))
@@ -213,8 +213,12 @@ func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
 	// Build aggregation function
 	aggFunc := aggregationFunc(aggType)
 
-	args := []any{tenantID, metricName}
-	where := "tenant_id = ? AND metric_name = ?"
+	args := []any{tenantID}
+	where := "tenant_id = ?"
+	if metricName != "" {
+		where += " AND metric_name = ?"
+		args = append(args, metricName)
+	}
 	if from != nil {
 		where += " AND occurred_at >= ?"
 		args = append(args, *from)
@@ -227,7 +231,7 @@ func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
 	query := "SELECT metric_name, '" + aggType + "' AS aggregation_type, '" + aggPeriod + "' AS aggregation_period, " +
 		aggFunc + "(value) AS agg_value, " +
 		"toString(" + periodExpr + ") AS period_start, " +
-		"toString(addSeconds(" + periodExpr + ", periodSeconds('" + periodInterval(aggPeriod) + "'))) AS period_end " +
+		"toString(" + periodEndExpr(aggPeriod) + ") AS period_end " +
 		"FROM metric_events WHERE " + where + " " +
 		"GROUP BY metric_name, " + periodExpr + " " +
 		"ORDER BY " + periodExpr + " ASC"
@@ -424,5 +428,23 @@ func periodInterval(period string) string {
 		return "1 MONTH"
 	default:
 		return "1 HOUR"
+	}
+}
+
+// periodEndExpr returns the ClickHouse expression for the period-end timestamp.
+// Uses native add* functions; the previously-referenced periodSeconds() does
+// not exist in ClickHouse, which made every aggregated query 500.
+func periodEndExpr(period string) string {
+	switch period {
+	case "HOUR":
+		return "addHours(toStartOfHour(occurred_at), 1)"
+	case "DAY":
+		return "addDays(toStartOfDay(occurred_at), 1)"
+	case "WEEK":
+		return "addDays(toStartOfWeek(occurred_at), 7)"
+	case "MONTH":
+		return "addMonths(toStartOfMonth(occurred_at), 1)"
+	default:
+		return "addHours(toStartOfHour(occurred_at), 1)"
 	}
 }
