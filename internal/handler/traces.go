@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/AgentHub-Studio/agenthub-go-commons/tenant"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/go-chi/chi/v5"
@@ -104,8 +105,9 @@ func (h *TraceHandler) createExecution(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.ExecutionID == "" || req.TenantID == "" {
-		jsonError(w, "executionId and tenantId are required", http.StatusBadRequest)
+	req.TenantID = tenant.FromContext(r.Context())
+	if req.ExecutionID == "" {
+		jsonError(w, "executionId is required", http.StatusBadRequest)
 		return
 	}
 	if req.StartedAt.IsZero() {
@@ -149,11 +151,7 @@ func (h *TraceHandler) updateExecution(w http.ResponseWriter, r *http.Request) {
 
 func (h *TraceHandler) getExecution(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionId")
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	var e executionRow
 	if err := h.conn.QueryRow(r.Context(),
 		"SELECT execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg FROM agent_executions WHERE execution_id = ? AND tenant_id = ? LIMIT 1",
@@ -166,11 +164,7 @@ func (h *TraceHandler) getExecution(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) listExecutions(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	limit := queryInt(r, "limit", 100)
 	page := queryInt(r, "page", 0)
 	size := queryInt(r, "size", limit)
@@ -229,10 +223,10 @@ func (h *TraceHandler) listExecutions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) listByAgent(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
+	tenantID := tenant.FromContext(r.Context())
 	agentID := r.URL.Query().Get("agentId")
-	if tenantID == "" || agentID == "" {
-		jsonError(w, "tenantId and agentId are required", http.StatusBadRequest)
+	if agentID == "" {
+		jsonError(w, "agentId is required", http.StatusBadRequest)
 		return
 	}
 	limit := queryInt(r, "limit", 100)
@@ -252,11 +246,7 @@ func (h *TraceHandler) listByAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) listByPeriod(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	from, to, err := parseTimeRange(r.URL.Query().Get("startDate"), r.URL.Query().Get("endDate"))
 	if err != nil || from == nil || to == nil {
 		jsonError(w, "startDate and endDate are required (ISO 8601)", http.StatusBadRequest)
@@ -280,11 +270,7 @@ func (h *TraceHandler) listByPeriod(w http.ResponseWriter, r *http.Request) {
 
 func (h *TraceHandler) listNodeTraces(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionId")
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	rows, err := h.conn.Query(r.Context(),
 		"SELECT node_execution_id, execution_id, tenant_id, node_id, node_type, status, started_at, finished_at, duration_ms, input_tokens, output_tokens, error_msg FROM node_executions WHERE execution_id = ? AND tenant_id = ? ORDER BY started_at ASC",
 		executionID, tenantID,
@@ -313,8 +299,9 @@ func (h *TraceHandler) createToolTrace(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.ToolExecutionID == "" || req.TenantID == "" {
-		jsonError(w, "toolExecutionId and tenantId are required", http.StatusBadRequest)
+	req.TenantID = tenant.FromContext(r.Context())
+	if req.ToolExecutionID == "" {
+		jsonError(w, "toolExecutionId is required", http.StatusBadRequest)
 		return
 	}
 	if req.StartedAt.IsZero() {
@@ -334,10 +321,10 @@ func (h *TraceHandler) createToolTrace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) listToolsBySkill(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
+	tenantID := tenant.FromContext(r.Context())
 	skillSlug := r.URL.Query().Get("skillSlug")
-	if tenantID == "" || skillSlug == "" {
-		jsonError(w, "tenantId and skillSlug are required", http.StatusBadRequest)
+	if skillSlug == "" {
+		jsonError(w, "skillSlug is required", http.StatusBadRequest)
 		return
 	}
 	limit := queryInt(r, "limit", 100)
@@ -357,10 +344,10 @@ func (h *TraceHandler) listToolsBySkill(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *TraceHandler) listToolsByType(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
+	tenantID := tenant.FromContext(r.Context())
 	toolType := r.URL.Query().Get("toolType")
-	if tenantID == "" || toolType == "" {
-		jsonError(w, "tenantId and toolType are required", http.StatusBadRequest)
+	if toolType == "" {
+		jsonError(w, "toolType is required", http.StatusBadRequest)
 		return
 	}
 	limit := queryInt(r, "limit", 100)
@@ -380,11 +367,7 @@ func (h *TraceHandler) listToolsByType(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) countExecutions(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	status := r.URL.Query().Get("status")
 	sinceStr := r.URL.Query().Get("since")
 
