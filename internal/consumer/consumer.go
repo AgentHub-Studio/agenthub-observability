@@ -90,13 +90,13 @@ func (c *Consumer) consume(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ch, err := conn.Channel()
 	if err != nil {
 		return err
 	}
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 
 	if err := ch.Qos(prefetchCount, 0, false); err != nil {
 		return err

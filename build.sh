@@ -1,9 +1,64 @@
-#!/bin/bash
-MAVEN_IMAGE="maven:3.9.12-amazoncorretto-25"
+#!/usr/bin/env bash
+set -euo pipefail
 
-docker run --rm \
-  -v "$(pwd)":/app \
-  -v "$HOME/.m2":/root/.m2 \
-  -w /app \
-  ${MAVEN_IMAGE} \
-  mvn "$@"
+GO_IMAGE="golang:1.25.12-alpine"
+MODULE_CACHE_VOLUME="${AGENTHUB_GO_CACHE_VOLUME:-agenthub-observability-go-cache}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMMONS_DIR="${AGENTHUB_GO_COMMONS_DIR:-$(dirname "${SCRIPT_DIR}")/agenthub-go-commons}"
+
+if [[ ! -d "${COMMONS_DIR}" ]]; then
+  echo "agenthub-go-commons not found: ${COMMONS_DIR}" >&2
+  exit 1
+fi
+
+run_go() {
+  docker run --rm \
+    -v "${SCRIPT_DIR}":/app \
+    -v "${MODULE_CACHE_VOLUME}":/go/pkg/mod \
+    -v "${COMMONS_DIR}":/app/agenthub-go-commons:ro \
+    -w /app \
+    "${GO_IMAGE}" \
+    "$@"
+}
+
+command="${1:-help}"
+shift || true
+
+case "${command}" in
+  compile)
+    run_go go build ./...
+    ;;
+  test)
+    docker run --rm \
+      -v "${SCRIPT_DIR}":/app \
+      -v "${MODULE_CACHE_VOLUME}":/go/pkg/mod \
+      -v "${COMMONS_DIR}":/app/agenthub-go-commons:ro \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -e CGO_ENABLED=1 \
+      -w /app \
+      "${GO_IMAGE}" \
+      sh -c 'apk add --no-cache gcc musl-dev && go test -v -race -coverprofile=coverage.out ./... "$@"' -- "$@"
+    ;;
+  package)
+    docker build \
+      --build-context "gocommons=${COMMONS_DIR}" \
+      -t "agenthub-studio/agenthub-observability:local" \
+      "$@" \
+      "${SCRIPT_DIR}"
+    ;;
+  lint)
+    docker run --rm \
+      -v "${SCRIPT_DIR}":/app \
+      -v "${MODULE_CACHE_VOLUME}":/go/pkg/mod \
+      -v "${COMMONS_DIR}":/app/agenthub-go-commons:ro \
+      -w /app \
+      golangci/golangci-lint:latest \
+      golangci-lint run ./... "$@"
+    ;;
+  tidy)
+    run_go go mod tidy
+    ;;
+  help|*)
+    echo "Usage: ./build.sh [compile|test|package|lint|tidy]"
+    ;;
+esac

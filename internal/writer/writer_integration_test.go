@@ -51,7 +51,7 @@ func newTestClickHouse(t *testing.T) (*writer.Writer, func()) {
 	require.NoError(t, w.CreateTables(ctx), "create tables")
 
 	cleanup := func() {
-		conn.Close()
+		_ = conn.Close()
 		_ = container.Terminate(ctx)
 	}
 	return w, cleanup

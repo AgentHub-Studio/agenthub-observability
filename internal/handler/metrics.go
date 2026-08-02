@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/AgentHub-Studio/agenthub-go-commons/tenant"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -68,6 +69,9 @@ func (h *MetricHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v1/metrics/events", h.listEvents)
 	r.Get("/api/v1/metrics/aggregated", h.aggregated)
 
+	// V1 metric names
+	r.Get("/api/v1/metrics/names", h.listMetricNames)
+
 	// V1 convenience routes
 	r.Post("/api/v1/metrics/counter", h.createConvenience("COUNTER"))
 	r.Post("/api/v1/metrics/gauge", h.createConvenience("GAUGE"))
@@ -85,8 +89,9 @@ func (h *MetricHandler) createEvent(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.TenantID == "" || req.MetricName == "" {
-		jsonError(w, "tenantId and metricName are required", http.StatusBadRequest)
+	req.TenantID = tenant.FromContext(r.Context())
+	if req.MetricName == "" {
+		jsonError(w, "metricName is required", http.StatusBadRequest)
 		return
 	}
 	if req.EventID == "" {
@@ -114,6 +119,7 @@ func (h *MetricHandler) createEventBatch(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	tenantID := tenant.FromContext(r.Context())
 
 	batch, err := h.conn.PrepareBatch(r.Context(), "INSERT INTO metric_events")
 	if err != nil {
@@ -128,6 +134,7 @@ func (h *MetricHandler) createEventBatch(w http.ResponseWriter, r *http.Request)
 		if e.OccurredAt.IsZero() {
 			e.OccurredAt = now
 		}
+		e.TenantID = tenantID
 		if err := batch.Append(e.EventID, e.TenantID, e.MetricName, e.MetricType, e.Value, e.Labels, e.OccurredAt.UTC()); err != nil {
 			jsonError(w, "batch append failed", http.StatusInternalServerError)
 			return
@@ -141,11 +148,7 @@ func (h *MetricHandler) createEventBatch(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *MetricHandler) listEvents(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	metricName := r.URL.Query().Get("metricName")
 	limit := queryInt(r, "limit", 1000)
 	from, to, err := parseTimeRange(r.URL.Query().Get("startDate"), r.URL.Query().Get("endDate"))
@@ -178,7 +181,7 @@ func (h *MetricHandler) listEvents(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "query failed", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	results := make([]metricEventRow, 0)
 	for rows.Next() {
@@ -193,11 +196,7 @@ func (h *MetricHandler) listEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	metricName := r.URL.Query().Get("metricName")
 	aggType := r.URL.Query().Get("aggregationType")
 	aggPeriod := r.URL.Query().Get("aggregationPeriod")
@@ -241,7 +240,7 @@ func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "query failed", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	results := make([]aggregatedMetricRow, 0)
 	for rows.Next() {
@@ -255,15 +254,40 @@ func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, results)
 }
 
+func (h *MetricHandler) listMetricNames(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenant.FromContext(r.Context())
+
+	rows, err := h.conn.Query(r.Context(),
+		"SELECT DISTINCT metric_name FROM metric_events WHERE tenant_id = ? ORDER BY metric_name ASC",
+		tenantID,
+	)
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = rows.Close() }()
+
+	names := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			jsonError(w, "scan failed", http.StatusInternalServerError)
+			return
+		}
+		names = append(names, name)
+	}
+	writeJSON(w, names)
+}
+
 // createConvenience returns a handler for POST /api/v1/metrics/{type} convenience endpoints.
-// Params: tenantId, metricName, value (all via query string).
+// Params: metricName and value via query string; tenant comes from the request context.
 func (h *MetricHandler) createConvenience(metricType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID := r.URL.Query().Get("tenantId")
+		tenantID := tenant.FromContext(r.Context())
 		metricName := r.URL.Query().Get("metricName")
 		valueStr := r.URL.Query().Get("value")
-		if tenantID == "" || metricName == "" {
-			jsonError(w, "tenantId and metricName are required", http.StatusBadRequest)
+		if metricName == "" {
+			jsonError(w, "metricName is required", http.StatusBadRequest)
 			return
 		}
 		var value float64
@@ -303,11 +327,7 @@ func (h *MetricHandler) insertEvent(r *http.Request, e metricEventRow) error {
 }
 
 func (h *MetricHandler) agentMetrics(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	from, to, err := parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		jsonError(w, "invalid date format, use ISO 8601", http.StatusBadRequest)
@@ -333,7 +353,7 @@ func (h *MetricHandler) agentMetrics(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "query failed", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	results := make([]agentMetricRow, 0)
 	for rows.Next() {
@@ -354,11 +374,7 @@ func (h *MetricHandler) agentMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MetricHandler) summary(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	if tenantID == "" {
-		jsonError(w, "tenantId is required", http.StatusBadRequest)
-		return
-	}
+	tenantID := tenant.FromContext(r.Context())
 	var totalRuns, successRuns, totalAgents uint64
 	var avgDuration float64
 	if err := h.conn.QueryRow(r.Context(),
@@ -377,6 +393,7 @@ func (h *MetricHandler) summary(w http.ResponseWriter, r *http.Request) {
 
 // RegisterAll wires both trace and metric handlers onto r.
 func RegisterAll(r chi.Router, conn clickhouse.Conn) {
+	r.Use(requireTenantContext)
 	NewTraceHandler(conn).RegisterRoutes(r)
 	NewMetricHandler(conn).RegisterRoutes(r)
 }
@@ -415,25 +432,9 @@ func aggregationFunc(aggType string) string {
 	}
 }
 
-// periodInterval returns a ClickHouse interval string for the given period.
-func periodInterval(period string) string {
-	switch period {
-	case "HOUR":
-		return "1 HOUR"
-	case "DAY":
-		return "1 DAY"
-	case "WEEK":
-		return "7 DAY"
-	case "MONTH":
-		return "1 MONTH"
-	default:
-		return "1 HOUR"
-	}
-}
-
-// periodEndExpr returns the ClickHouse expression for the period-end timestamp.
-// Uses native add* functions; the previously-referenced periodSeconds() does
-// not exist in ClickHouse, which made every aggregated query 500.
+// periodEndExpr returns the ClickHouse expression for the period end timestamp,
+// derived from the bucket truncation. Uses native add* functions because the
+// previously-referenced periodSeconds() does not exist in ClickHouse.
 func periodEndExpr(period string) string {
 	switch period {
 	case "HOUR":

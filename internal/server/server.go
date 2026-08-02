@@ -8,6 +8,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/AgentHub-Studio/agenthub-go-commons/auth"
+	"github.com/AgentHub-Studio/agenthub-go-commons/tenant"
 	"github.com/AgentHub-Studio/agenthub-observability/internal/config"
 	"github.com/AgentHub-Studio/agenthub-observability/internal/consumer"
 	"github.com/AgentHub-Studio/agenthub-observability/internal/handler"
@@ -29,7 +31,14 @@ func New(cfg *config.Config, ch clickhouse.Conn, c *consumer.Consumer) *Server {
 	r.Use(corsMiddleware(cfg.CORSOrigins))
 	r.Options("/*", func(w http.ResponseWriter, r *http.Request) {})
 
-	handler.RegisterAll(r, ch)
+	// /api/* routes require JWT + tenant context. Health/ready/metrics stay public.
+	r.Group(func(pr chi.Router) {
+		if cfg.KeycloakBaseURL != "" {
+			pr.Use(auth.Middleware(auth.Config{KeycloakBaseURL: cfg.KeycloakBaseURL}))
+			pr.Use(tenant.Middleware())
+		}
+		handler.RegisterAll(pr, ch)
+	})
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

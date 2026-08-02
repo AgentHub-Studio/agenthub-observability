@@ -82,9 +82,9 @@ func (a *Aggregator) aggregate(ctx context.Context) error {
 	}
 
 	periods := []struct {
-		period    AggregationPeriod
-		trunc     string
-		lookback  time.Duration
+		period   AggregationPeriod
+		trunc    string
+		lookback time.Duration
 	}{
 		{PeriodHour, "toStartOfHour(occurred_at)", 2 * time.Hour},
 		{PeriodDay, "toStartOfDay(occurred_at)", 48 * time.Hour},
@@ -118,7 +118,7 @@ func (a *Aggregator) computeAndInsert(
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type row struct {
 		TenantID    string

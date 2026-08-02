@@ -33,7 +33,11 @@ func main() {
 		slog.Error("failed to connect to ClickHouse", "err", err)
 		os.Exit(1)
 	}
-	defer ch.Close()
+	defer func() {
+		if err := ch.Close(); err != nil {
+			slog.Warn("failed to close ClickHouse connection", "err", err)
+		}
+	}()
 
 	w := writer.NewWriter(ch)
 	if err := w.CreateTables(ctx); err != nil {

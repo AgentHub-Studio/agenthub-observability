@@ -15,12 +15,12 @@ func TestCreateEvent_MissingRequired(t *testing.T) {
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/metrics/events", strings.NewReader(`{}`))
+	req := tenantRequest(http.MethodPost, "/api/v1/metrics/events", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "tenantId and metricName are required")
+	assert.Contains(t, rec.Body.String(), "metricName is required")
 }
 
 func TestCreateEvent_InvalidBody(t *testing.T) {
@@ -28,23 +28,23 @@ func TestCreateEvent_InvalidBody(t *testing.T) {
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/metrics/events", strings.NewReader("bad-json"))
+	req := tenantRequest(http.MethodPost, "/api/v1/metrics/events", strings.NewReader("bad-json"))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestListEvents_MissingTenantID(t *testing.T) {
-	h := &MetricHandler{conn: nil}
+func TestMetricRoutes_RejectMissingTenantContext(t *testing.T) {
 	r := chi.NewRouter()
-	h.RegisterRoutes(r)
+	RegisterAll(r, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/metrics/events", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "tenant context is required")
 }
 
 func TestListEvents_InvalidDate(t *testing.T) {
@@ -52,19 +52,19 @@ func TestListEvents_InvalidDate(t *testing.T) {
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/metrics/events?tenantId=test&startDate=invalid", nil)
+	req := tenantRequest(http.MethodGet, "/api/v1/metrics/events?tenantId=other-tenant&startDate=invalid", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestAggregated_MissingParams(t *testing.T) {
+func TestAggregated_InvalidDate(t *testing.T) {
 	h := &MetricHandler{conn: nil}
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/metrics/aggregated?tenantId=test", nil)
+	req := tenantRequest(http.MethodGet, "/api/v1/metrics/aggregated?tenantId=other-tenant&startDate=invalid", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -76,7 +76,7 @@ func TestConvenienceCounter_MissingParams(t *testing.T) {
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/metrics/counter", nil)
+	req := tenantRequest(http.MethodPost, "/api/v1/metrics/counter", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -88,23 +88,22 @@ func TestConvenienceGauge_InvalidValue(t *testing.T) {
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/metrics/gauge?tenantId=test&metricName=m&value=notanumber", nil)
+	req := tenantRequest(http.MethodPost, "/api/v1/metrics/gauge?tenantId=other-tenant&metricName=m&value=notanumber", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestSummary_MissingTenantID(t *testing.T) {
-	h := &MetricHandler{conn: nil}
+func TestMetricSummary_RejectsMissingTenantContext(t *testing.T) {
 	r := chi.NewRouter()
-	h.RegisterRoutes(r)
+	RegisterAll(r, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/metrics/summary", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 func TestPeriodTruncExpr(t *testing.T) {

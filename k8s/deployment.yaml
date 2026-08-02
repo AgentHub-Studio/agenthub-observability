@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: observability
-          image: localhost:5000/agenthub-observability:latest
+          image: registry.cezar.dev/agenthub-observability:latest
           imagePullPolicy: Always
           ports:
             - name: http
