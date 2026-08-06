@@ -14,9 +14,22 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     ./cmd/observability
 
 FROM scratch
+ARG OCI_CREATED="unknown"
+ARG OCI_REVISION="unknown"
+ARG OCI_SOURCE="https://github.com/AgentHub-Studio/agenthub-observability"
+ARG OCI_VERSION="local"
+LABEL org.opencontainers.image.title="agenthub-observability" \
+    org.opencontainers.image.description="AgentHub observability service" \
+    org.opencontainers.image.source="${OCI_SOURCE}" \
+    org.opencontainers.image.revision="${OCI_REVISION}" \
+    org.opencontainers.image.created="${OCI_CREATED}" \
+    org.opencontainers.image.version="${OCI_VERSION}" \
+    org.opencontainers.image.vendor="AgentHub Studio" \
+    org.opencontainers.image.licenses="Proprietary"
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /build/bin/observability /observability
+USER 65532:65532
 EXPOSE 8086
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD ["/observability", "-health"] || exit 1

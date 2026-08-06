@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -41,18 +42,16 @@ func New(cfg *config.Config, ch clickhouse.Conn, c *consumer.Consumer) *Server {
 	})
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
 	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		if c == nil {
-			json.NewEncoder(w).Encode(map[string]any{"consumer": nil}) //nolint:errcheck
+			writeJSON(w, http.StatusOK, map[string]any{"consumer": nil})
 			return
 		}
 		m := c.Metrics()
-		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+		writeJSON(w, http.StatusOK, map[string]any{
 			"consumer": map[string]any{
 				"eventsProcessed": m.EventsProcessed,
 				"eventsErrored":   m.EventsErrored,
@@ -62,15 +61,22 @@ func New(cfg *config.Config, ch clickhouse.Conn, c *consumer.Consumer) *Server {
 
 	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.ch.Ping(r.Context()); err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{"status": "unavailable"}) //nolint:errcheck
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
 	s.router = r
 	return s
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("server: write JSON response failed", "err", err)
+	}
 }
 
 // ServeHTTP implements http.Handler.

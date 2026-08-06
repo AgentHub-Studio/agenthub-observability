@@ -4,8 +4,8 @@ package database
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -22,16 +22,22 @@ func RunMigrations(ctx context.Context, conn clickhouse.Conn, migrationsDir stri
 		return fmt.Errorf("migration: read dir %q: %w", migrationsDir, err)
 	}
 
+	root, err := os.OpenRoot(migrationsDir)
+	if err != nil {
+		return fmt.Errorf("migration: open root %q: %w", migrationsDir, err)
+	}
+	defer root.Close()
+
 	var files []string
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
-			files = append(files, filepath.Join(migrationsDir, e.Name()))
+			files = append(files, e.Name())
 		}
 	}
 	sort.Strings(files)
 
 	for _, f := range files {
-		sql, err := os.ReadFile(f)
+		sql, err := readMigrationFile(root, f)
 		if err != nil {
 			return fmt.Errorf("migration: read %q: %w", f, err)
 		}
@@ -46,6 +52,15 @@ func RunMigrations(ctx context.Context, conn clickhouse.Conn, migrationsDir stri
 		}
 	}
 	return nil
+}
+
+func readMigrationFile(root *os.Root, name string) ([]byte, error) {
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(file)
 }
 
 // splitStatements splits a SQL string by semicolons, ignoring those inside comments.

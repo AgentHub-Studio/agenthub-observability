@@ -85,6 +85,8 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-	httpServer.Shutdown(shutdownCtx) //nolint:errcheck
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("observability shutdown failed", "err", err)
+	}
 	slog.Info("observability stopped")
 }
