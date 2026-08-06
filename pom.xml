@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.0</version>
+        <version>3.5.14</version>
         <relativePath/>
     </parent>
     <groupId>dev.cezar</groupId>
@@ -19,6 +19,9 @@
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <clickhouse.version>0.9.8</clickhouse.version>
+        <jackson-bom.version>2.21.4</jackson-bom.version>
+        <netty.version>4.1.135.Final</netty.version>
     </properties>
     
     <dependencies>
@@ -38,14 +41,14 @@
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>clickhouse-r2dbc</artifactId>
-            <version>0.7.1</version>
+            <version>${clickhouse.version}</version>
         </dependency>
 
         <!-- ClickHouse JDBC driver (Flyway) -->
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.7.1</version>
+            <version>${clickhouse.version}</version>
             <classifier>all</classifier>
             <scope>runtime</scope>
         </dependency>

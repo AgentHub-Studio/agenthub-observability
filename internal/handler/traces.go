@@ -3,11 +3,11 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/AgentHub-Studio/agenthub-go-commons/tenant"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/go-chi/chi/v5"
@@ -105,9 +105,17 @@ func (h *TraceHandler) createExecution(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	req.TenantID = tenant.FromContext(r.Context())
+	req.TenantID = tenantIDFromRequestOrValue(r, req.TenantID)
+	if req.ExecutionID == "" && req.TenantID == "" {
+		jsonError(w, "executionId and tenantId are required", http.StatusBadRequest)
+		return
+	}
 	if req.ExecutionID == "" {
 		jsonError(w, "executionId is required", http.StatusBadRequest)
+		return
+	}
+	if req.TenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
 		return
 	}
 	if req.StartedAt.IsZero() {
@@ -123,7 +131,7 @@ func (h *TraceHandler) createExecution(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(req) //nolint:errcheck
+	writeJSON(w, req)
 }
 
 func (h *TraceHandler) updateExecution(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +159,10 @@ func (h *TraceHandler) updateExecution(w http.ResponseWriter, r *http.Request) {
 
 func (h *TraceHandler) getExecution(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionId")
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	var e executionRow
 	if err := h.conn.QueryRow(r.Context(),
 		"SELECT execution_id, tenant_id, agent_id, status, started_at, finished_at, duration_ms, node_count, error_msg FROM agent_executions WHERE execution_id = ? AND tenant_id = ? LIMIT 1",
@@ -164,7 +175,10 @@ func (h *TraceHandler) getExecution(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) listExecutions(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	limit := queryInt(r, "limit", 100)
 	page := queryInt(r, "page", 0)
 	size := queryInt(r, "size", limit)
@@ -223,7 +237,10 @@ func (h *TraceHandler) listExecutions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) listByAgent(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	agentID := r.URL.Query().Get("agentId")
 	if agentID == "" {
 		jsonError(w, "agentId is required", http.StatusBadRequest)
@@ -246,7 +263,10 @@ func (h *TraceHandler) listByAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) listByPeriod(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	from, to, err := parseTimeRange(r.URL.Query().Get("startDate"), r.URL.Query().Get("endDate"))
 	if err != nil || from == nil || to == nil {
 		jsonError(w, "startDate and endDate are required (ISO 8601)", http.StatusBadRequest)
@@ -270,7 +290,10 @@ func (h *TraceHandler) listByPeriod(w http.ResponseWriter, r *http.Request) {
 
 func (h *TraceHandler) listNodeTraces(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionId")
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	rows, err := h.conn.Query(r.Context(),
 		"SELECT node_execution_id, execution_id, tenant_id, node_id, node_type, status, started_at, finished_at, duration_ms, input_tokens, output_tokens, error_msg FROM node_executions WHERE execution_id = ? AND tenant_id = ? ORDER BY started_at ASC",
 		executionID, tenantID,
@@ -299,9 +322,13 @@ func (h *TraceHandler) createToolTrace(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	req.TenantID = tenant.FromContext(r.Context())
+	req.TenantID = tenantIDFromRequestOrValue(r, req.TenantID)
 	if req.ToolExecutionID == "" {
 		jsonError(w, "toolExecutionId is required", http.StatusBadRequest)
+		return
+	}
+	if req.TenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
 		return
 	}
 	if req.StartedAt.IsZero() {
@@ -317,11 +344,14 @@ func (h *TraceHandler) createToolTrace(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(req) //nolint:errcheck
+	writeJSON(w, req)
 }
 
 func (h *TraceHandler) listToolsBySkill(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	skillSlug := r.URL.Query().Get("skillSlug")
 	if skillSlug == "" {
 		jsonError(w, "skillSlug is required", http.StatusBadRequest)
@@ -344,7 +374,10 @@ func (h *TraceHandler) listToolsBySkill(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *TraceHandler) listToolsByType(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	toolType := r.URL.Query().Get("toolType")
 	if toolType == "" {
 		jsonError(w, "toolType is required", http.StatusBadRequest)
@@ -367,7 +400,10 @@ func (h *TraceHandler) listToolsByType(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TraceHandler) countExecutions(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	status := r.URL.Query().Get("status")
 	sinceStr := r.URL.Query().Get("since")
 
@@ -451,11 +487,15 @@ func queryInt(r *http.Request, key string, def int) int {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("handler: write JSON response failed", "err", err)
+	}
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
+		slog.Error("handler: write JSON error failed", "err", err)
+	}
 }

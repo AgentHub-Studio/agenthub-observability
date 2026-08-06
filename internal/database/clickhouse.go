@@ -20,7 +20,9 @@ func NewClickHouse(ctx context.Context, url string) (clickhouse.Conn, error) {
 	}
 
 	if err := conn.Ping(ctx); err != nil {
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, fmt.Errorf("clickhouse: ping: %w; close connection: %v", err, closeErr)
+		}
 		return nil, fmt.Errorf("clickhouse: ping: %w", err)
 	}
 

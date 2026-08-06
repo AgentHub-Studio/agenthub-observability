@@ -13,6 +13,22 @@ import (
 )
 
 const (
+	maxInt32 = int(^uint32(0) >> 1)
+	minInt32 = -maxInt32 - 1
+)
+
+func nodeCountToInt32(value int) int32 {
+	switch {
+	case value > maxInt32:
+		return int32(maxInt32)
+	case value < minInt32:
+		return int32(minInt32)
+	default:
+		return int32(value)
+	}
+}
+
+const (
 	createAgentExecutionsTable = `
 CREATE TABLE IF NOT EXISTS agent_executions (
     execution_id   String,
@@ -159,7 +175,7 @@ func (w *Writer) BulkInsertExecutions(ctx context.Context, events []consumer.Exe
 			e.StartedAt.UTC(),
 			finishedAt,
 			e.DurationMs,
-			int32(e.NodeCount),
+			nodeCountToInt32(e.NodeCount),
 			e.ErrorMsg,
 		); err != nil {
 			return fmt.Errorf("writer: append row: %w", err)

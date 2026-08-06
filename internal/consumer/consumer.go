@@ -174,12 +174,17 @@ func (c *Consumer) consume(ctx context.Context) error {
 				slog.Warn("consumer: failed to dispatch event, nacking",
 					"routingKey", msg.RoutingKey, "err", err)
 				c.eventsErrored.Add(1)
-				msg.Nack(false, false) //nolint:errcheck
+				if nackErr := msg.Nack(false, false); nackErr != nil {
+					slog.Error("consumer: nack failed", "routingKey", msg.RoutingKey, "err", nackErr)
+				}
 				continue
 			}
 
 			c.eventsProcessed.Add(1)
-			msg.Ack(false) //nolint:errcheck
+			if ackErr := msg.Ack(false); ackErr != nil {
+				c.eventsErrored.Add(1)
+				slog.Error("consumer: ack failed", "routingKey", msg.RoutingKey, "err", ackErr)
+			}
 		}
 	}
 }

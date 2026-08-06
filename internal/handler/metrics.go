@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/AgentHub-Studio/agenthub-go-commons/tenant"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -89,7 +88,15 @@ func (h *MetricHandler) createEvent(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	req.TenantID = tenant.FromContext(r.Context())
+	req.TenantID = tenantIDFromRequestOrValue(r, req.TenantID)
+	if req.TenantID == "" && req.MetricName == "" {
+		jsonError(w, "tenantId and metricName are required", http.StatusBadRequest)
+		return
+	}
+	if req.TenantID == "" {
+		jsonError(w, "tenantId is required", http.StatusBadRequest)
+		return
+	}
 	if req.MetricName == "" {
 		jsonError(w, "metricName is required", http.StatusBadRequest)
 		return
@@ -106,7 +113,7 @@ func (h *MetricHandler) createEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(req) //nolint:errcheck
+	writeJSON(w, req)
 }
 
 func (h *MetricHandler) createEventBatch(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +126,10 @@ func (h *MetricHandler) createEventBatch(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	batch, err := h.conn.PrepareBatch(r.Context(), "INSERT INTO metric_events")
 	if err != nil {
@@ -148,7 +158,10 @@ func (h *MetricHandler) createEventBatch(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *MetricHandler) listEvents(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	metricName := r.URL.Query().Get("metricName")
 	limit := queryInt(r, "limit", 1000)
 	from, to, err := parseTimeRange(r.URL.Query().Get("startDate"), r.URL.Query().Get("endDate"))
@@ -196,10 +209,17 @@ func (h *MetricHandler) listEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	metricName := r.URL.Query().Get("metricName")
 	aggType := r.URL.Query().Get("aggregationType")
 	aggPeriod := r.URL.Query().Get("aggregationPeriod")
+	if metricName == "" || aggType == "" || aggPeriod == "" {
+		jsonError(w, "metricName, aggregationType and aggregationPeriod are required", http.StatusBadRequest)
+		return
+	}
 	from, to, err := parseTimeRange(r.URL.Query().Get("startDate"), r.URL.Query().Get("endDate"))
 	if err != nil {
 		jsonError(w, "invalid date format, use ISO 8601", http.StatusBadRequest)
@@ -255,7 +275,10 @@ func (h *MetricHandler) aggregated(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MetricHandler) listMetricNames(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	rows, err := h.conn.Query(r.Context(),
 		"SELECT DISTINCT metric_name FROM metric_events WHERE tenant_id = ? ORDER BY metric_name ASC",
@@ -283,7 +306,10 @@ func (h *MetricHandler) listMetricNames(w http.ResponseWriter, r *http.Request) 
 // Params: tenantId, metricName, value (all via query string).
 func (h *MetricHandler) createConvenience(metricType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID := tenant.FromContext(r.Context())
+		tenantID, ok := requireTenantID(w, r)
+		if !ok {
+			return
+		}
 		metricName := r.URL.Query().Get("metricName")
 		valueStr := r.URL.Query().Get("value")
 		if metricName == "" {
@@ -315,7 +341,7 @@ func (h *MetricHandler) createConvenience(metricType string) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(evt) //nolint:errcheck
+		writeJSON(w, evt)
 	}
 }
 
@@ -327,7 +353,10 @@ func (h *MetricHandler) insertEvent(r *http.Request, e metricEventRow) error {
 }
 
 func (h *MetricHandler) agentMetrics(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	from, to, err := parseTimeRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		jsonError(w, "invalid date format, use ISO 8601", http.StatusBadRequest)
@@ -374,7 +403,10 @@ func (h *MetricHandler) agentMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MetricHandler) summary(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenant.FromContext(r.Context())
+	tenantID, ok := requireTenantID(w, r)
+	if !ok {
+		return
+	}
 	var totalRuns, successRuns, totalAgents uint64
 	var avgDuration float64
 	if err := h.conn.QueryRow(r.Context(),
